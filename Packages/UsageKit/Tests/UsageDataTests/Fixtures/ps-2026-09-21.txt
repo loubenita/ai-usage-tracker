@@ -1,0 +1,26 @@
+  PID  PPID TTY      STARTED                      COMMAND
+    1     0 ??       Mon Aug 24 20:16:04 2026     /sbin/launchd
+  736     1 ??       Mon Aug 24 20:19:30 2026     /Applications/Warp.app/Contents/MacOS/stable
+  839   736 ??       Mon Aug 24 20:19:35 2026     /Applications/Warp.app/Contents/MacOS/stable terminal-server --parent-pid=736
+ 3399   839 ttys002  Sun Sep 20 16:39:17 2026     -zsh -g --no_rcs
+ 3857  3399 ttys002  Sun Sep 20 16:39:20 2026     claude --dangerously-skip-permissions
+16443     1 ??       Sun Sep  6 09:28:35 2026     /bin/zsh -c source /Users/me/.claude/shell-snapshots/snapshot-zsh-1788648860415-qxpslb.sh 2>/dev/null || true && export CLAUDE_CODE_VERSION="2.1.
+21332     1 ??       Wed Sep 16 15:31:31 2026     tee /private/tmp/claude-501/-Users-me/6a4e38e7-d6a4-4f86-a541-cafafdcecc5b/scratchpad/compact-proof-run.log
+33428     1 ??       Sat Sep  5 18:22:36 2026     node bin/serve.js
+35040 64347 ttys004  Mon Sep 21 22:00:49 2026     /Applications/Xcode-26.4.0.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python /Users/me/.claude/tools/tab-pty.py /Users/me/.claude/remote-sessions/ai-usage-tracker.log /Users/me/.claude/session-input/ai-usage-tracker.in -- claude --dangerously-skip-permissions --fallbac
+35056 35040 ttys006  Mon Sep 21 22:00:49 2026     claude --dangerously-skip-permissions --fallback-model claude-opus-5 --name ai-usage-tracker --remote-control ai-usage-tracker
+44522   839 ttys003  Mon Sep 21 20:16:53 2026     -zsh -g --no_rcs
+45154 44522 ttys003  Mon Sep 21 20:16:59 2026     /Applications/Xcode-26.4.0.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python /Users/me/.claude/tools/tab-pty.py /Users/me/.claude/remote-sessions/lead.log /Users/me/.claude/session-input/lead.in -- claude --dangerously-skip-permissions --fallback-model claude-opus-5 --
+45226 45154 ttys005  Mon Sep 21 20:16:59 2026     claude --dangerously-skip-permissions --fallback-model claude-opus-5 --mcp-config /Users/me/.config/tooling/mcp-lead.json --strict-mcp-config --settings /Users/me/.config/tooling/settings-lead.json --effort high --name lead --remote-control lead
+47746   839 ttys014  Mon Sep 21 16:14:41 2026     -zsh -g --no_rcs
+48718 47746 ttys014  Mon Sep 21 16:14:58 2026     claude --dangerously-skip-permissions
+52416 64347 ttys007  Mon Sep 21 20:19:34 2026     /Applications/Xcode-26.4.0.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python /Users/me/.claude/tools/tab-pty.py /Users/me/.claude/remote-sessions/Ticket-1-Fixer.log /Users/me/.claude/session-input/Ticket-1-Fixer.in -- claude --dangerously-skip-permissions --fallback-mo
+52454 52416 ttys009  Mon Sep 21 20:19:34 2026     claude --dangerously-skip-permissions --fallback-model claude-opus-5 --mcp-config /Users/me/Development/app--ticket-1/.claude/mcp-stream.json --strict-mcp-config --settings /Users/me/Development/app--ticket-1/.claude/settings-stream.json --effort high --name Ticket-1-Fixer --remote-control Ticket-1-Fixer
+64347     1 ??       Sun Sep 20 15:24:05 2026     tmux new-session -d -s lead -c /Users/me -e START_DIR=/Users/me -e CLAUDE_START_DIR=/Users/me -e CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 -e ROLE=lead -e CLAUDE_ROLE=lead -e DISPLAY_NAME=Lead -e CLAUDE_DISPLAY_NAME=Lead -e START_DIR=/Users/me -e CLAUDE_START_DIR=/Users/me bash /Users/me/.claude/tools/start-agent.sh __run-i
+83133   839 ttys018  Mon Sep 21 17:06:40 2026     -zsh -g --no_rcs
+84087 83133 ttys018  Mon Sep 21 17:06:50 2026     claude --dangerously-skip-permissions
+91865 48718 ??       Mon Sep 21 16:31:56 2026     /Users/me/.local/bin/claude daemon run --origin transient --spawned-by {"label":"claude","cwd":"/Users/me/Development/app-ios","pid":48718}
+91889 91865 ??       Mon Sep 21 16:31:56 2026     claude bg-pty-host --bg-pty-host /tmp/cc-daemon-501/ff14b4ab/spare/a9ba3530.pty.sock 200 50 -- /Users/me/.local/share/claude/versions/2.1.278 --bg-spare /tmp/cc-daemon-501/ff14b4ab/spare/a9ba3530.claim.sock
+91894 91889 ttys000  Mon Sep 21 16:31:56 2026     claude bg-spare --bg-spare /tmp/cc-daemon-501/ff14b4ab/spare/a9ba3530.claim.sock
+91902 91865 ??       Mon Sep 21 16:31:57 2026     claude bg-pty-host --bg-pty-host /tmp/cc-daemon-501/ff14b4ab/spare/1b26a818.pty.sock 200 50 -- /Users/me/.local/share/claude/versions/2.1.278 --bg-spare /tmp/cc-daemon-501/ff14b4ab/spare/1b26a818.claim.sock
+91921 91902 ??       Mon Sep 21 16:31:57 2026     claude bg-spare --bg-spare /tmp/cc-daemon-501/ff14b4ab/spare/1b26a818.claim.sock

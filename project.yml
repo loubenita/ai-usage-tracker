@@ -1,0 +1,54 @@
+name: AIUsageTracker
+options:
+  bundleIdPrefix: dev.me
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+packages:
+  UsageKit:
+    path: Packages/UsageKit
+targets:
+  AIUsageTracker:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: UsageKit
+        product: UsageDomain
+      - package: UsageKit
+        product: UsageData
+      - package: UsageKit
+        product: UsagePresentation
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: AI Usage Tracker
+        # The released version. App/Info.plist is written from here, so it belongs here.
+        CFBundleShortVersionString: 0.2.1
+        CFBundleVersion: "3"
+        LSUIElement: true
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSAppleEventsUsageDescription: AI Usage Tracker asks Terminal to select a session's tab when you click Open.
+        NSHumanReadableCopyright: ""
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.loubenita.ai-usage-tracker
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        GENERATE_INFOPLIST_FILE: NO
+schemes:
+  AIUsageTracker:
+    build:
+      targets:
+        AIUsageTracker: all
+    test:
+      targets:
+        - package: UsageKit/UsageDomainTests
+        - package: UsageKit/UsageDataTests
+        - package: UsageKit/UsagePresentationTests
