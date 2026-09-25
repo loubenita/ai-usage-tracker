@@ -1,7 +1,7 @@
 import SwiftUI
 import UsageDomain
 
-/// The context ring with the session's tokens inside: "640k".
+/// The context ring with the current context used inside: "68k".
 struct SessionRing: View {
     let model: RingModel
 
@@ -15,8 +15,7 @@ struct SessionRing: View {
                     style: StrokeStyle(lineWidth: 3, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
-            // 9.5pt semibold, as the frames draw "640k". A long real number, "424.3M", shrinks
-            // to fit the ring rather than being cut short.
+            // 9.5pt semibold. A long real number shrinks to fit rather than being cut short.
             Text(model.label)
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(Theme.primary)

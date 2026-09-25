@@ -1,15 +1,15 @@
 import SwiftUI
 
-/// The 320pt panel a session opens, as Paper frame 3 draws it: who and what, an Open button,
-/// the status, four key numbers, the context and the tightest limit, the token mix, and the
-/// details. Anything the agent did not report is left out.
+/// The panel a session opens: who and what, status, totals, context and the tightest limit stay
+/// visible. Token breakdowns, individual sub-agent runs and supporting facts sit behind one
+/// disclosure so the useful depth does not crowd the session's current state.
 struct PanelView: View {
     let model: SessionPanelModel
     let onOpen: () -> Void
+    @State private var showsDetails = false
 
     var body: some View {
-        // One panel, its sections stacked and separated by lines, as the frame draws it.
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             header
             StatusRow(model: model.status)
             if !model.stats.isEmpty {
@@ -22,31 +22,26 @@ struct PanelView: View {
                 }
                 .sectionDivider()
             }
-            if !model.tokenMix.isEmpty {
-                TokenMixView(segments: model.tokenMix).sectionDivider()
-            }
-            if let subagents = model.subagents {
-                SubagentsView(model: subagents).sectionDivider()
-            }
-            if !model.details.isEmpty {
-                VStack(spacing: 6) {
-                    ForEach(model.details, id: \.label) { row in
-                        HStack {
-                            Text(row.label).foregroundStyle(Theme.secondary)
-                            Spacer(minLength: 12)
-                            Text(row.value)
-                                .foregroundStyle(Theme.primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .staticDigits()
+            if hasDetails {
+                detailsToggle.sectionDivider()
+                if showsDetails {
+                    if !model.tokenMix.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            CapsHeader(title: "TOKEN BREAKDOWN")
+                            TokenMixView(segments: model.tokenMix)
                         }
-                        .font(TypeScale.secondaryFont)
+                    }
+                    if let subagents = model.subagents {
+                        SubagentsView(model: subagents).sectionDivider()
+                    }
+                    if !model.details.isEmpty {
+                        SessionDetailsView(rows: model.details).sectionDivider()
                     }
                 }
-                .sectionDivider()
             }
         }
         .glassPanel()
+        .onChange(of: model.sessionID) { showsDetails = false }
     }
 
     private var header: some View {
@@ -71,24 +66,109 @@ struct PanelView: View {
             }
         }
     }
+
+    private var hasDetails: Bool {
+        !model.tokenMix.isEmpty || model.subagents != nil || !model.details.isEmpty
+    }
+
+    private var detailsToggle: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(showsDetails ? "Hide details" : "Show details")
+                    .font(TypeScale.font(TypeScale.body, .semibold))
+                    .foregroundStyle(Theme.primary)
+                Text(detailsSummary)
+                    .font(TypeScale.captionFont)
+                    .foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: showsDetails ? "chevron.up" : "chevron.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+        }
+        .padding(.vertical, 2)
+        .clickable(showsDetails ? "Hide session details" : "Show session details") {
+            showsDetails.toggle()
+        }
+    }
+
+    private var detailsSummary: String {
+        [
+            model.tokenMix.isEmpty ? nil : "token mix",
+            model.subagents.map { "\($0.rows.count) sub-agent \($0.rows.count == 1 ? "run" : "runs")" },
+            model.details.isEmpty ? nil : "\(model.details.count) session facts",
+        ].compactMap { $0 }.joined(separator: " · ")
+    }
 }
 
-/// The session's sub-agents, a row per model: runs, tokens, cost at API prices and time.
+/// The session's sub-agents, with their aggregate followed by tokens, cost and time per run.
 private struct SubagentsView: View {
     let model: SubagentsModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 9) {
             CapsHeader(title: model.title, trailing: model.share)
+            Text(model.inclusion)
+                .font(TypeScale.font(TypeScale.secondary, .medium))
+                .foregroundStyle(Theme.primary)
+            HStack {
+                Text("All runs").foregroundStyle(Theme.secondary)
+                Spacer(minLength: 8)
+                Text(model.total).foregroundStyle(Theme.primary)
+            }
+            .font(TypeScale.secondaryFont)
+            .staticDigits()
             ForEach(model.rows) { row in
-                HStack(spacing: 0) {
-                    Text(row.name).foregroundStyle(Theme.name).lineLimit(1).frame(width: 130, alignment: .leading)
-                    Text(row.tokens ?? "").foregroundStyle(Theme.primary).frame(width: 50, alignment: .trailing)
-                    Text(row.cost ?? "").foregroundStyle(Theme.primary).frame(width: 50, alignment: .trailing)
-                    Text(row.time).foregroundStyle(Theme.secondary).frame(width: 58, alignment: .trailing)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(row.model)
+                            .font(TypeScale.font(TypeScale.body, .semibold))
+                            .foregroundStyle(Theme.name)
+                        Spacer(minLength: 8)
+                        Text(row.run)
+                            .font(TypeScale.captionFont)
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    HStack(spacing: 20) {
+                        if let tokens = row.tokens { metric("Tokens", tokens) }
+                        if let cost = row.cost { metric("Cost", cost) }
+                        metric("Time", row.time)
+                    }
                 }
-                .font(TypeScale.secondaryFont)
-                .staticDigits()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.lift(0.08)))
+                .help("Sub-agent \(row.id)")
+            }
+        }
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(TypeScale.captionFont).foregroundStyle(Theme.label)
+            Text(value).font(TypeScale.secondaryFont).foregroundStyle(Theme.primary).staticDigits()
+        }
+    }
+}
+
+/// Supporting facts use a label-over-value layout so branches and first asks can wrap instead
+/// of being squeezed into one dense row.
+private struct SessionDetailsView: View {
+    let rows: [DetailRowModel]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CapsHeader(title: "SESSION DETAILS")
+            ForEach(rows, id: \.label) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.label).font(TypeScale.captionFont).foregroundStyle(Theme.label)
+                    Text(row.value)
+                        .font(TypeScale.secondaryFont)
+                        .foregroundStyle(Theme.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .staticDigits()
+                }
             }
         }
     }

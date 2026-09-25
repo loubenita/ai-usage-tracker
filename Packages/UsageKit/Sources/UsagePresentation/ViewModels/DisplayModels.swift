@@ -9,8 +9,8 @@ public enum ItemHighlight: Sendable, Equatable {
 }
 
 public struct RingModel: Sendable, Equatable {
-    /// Inside the ring: the session's tokens so far, "640k", or its short label when the agent
-    /// reports no tokens.
+    /// Inside the ring: the current context in use, "68k", or its short label when the agent
+    /// reports no context. This is the same reading that fills the ring.
     public let label: String
     public let fraction: Double
     public let isNearlyFull: Bool
@@ -21,6 +21,12 @@ public struct RingModel: Sendable, Equatable {
 public struct StripItemModel: Sendable, Equatable, Identifiable {
     public let id: String
     public let ring: RingModel
+    /// The expanded strip's at-a-glance identity.
+    public let agentName: String
+    public let project: String
+    public let title: String
+    /// The person's first request, when the session record supplies it.
+    public let firstAsk: String?
     public let time: String
     public let needsUser: Bool
     /// The amber dot pulses until the item has been hovered once.
@@ -86,19 +92,23 @@ public struct DetailRowModel: Sendable, Equatable {
     public let value: String
 }
 
-/// "Sonnet 5 · 4 runs  96k  $0.29  12m": a session's sub-agents on one model.
+/// One sub-agent run and the usage attributable to that run.
 public struct SubagentRowModel: Sendable, Equatable, Identifiable {
-    public var id: String { name }
-    public let name: String
+    public let id: String
+    public let model: String
+    public let run: String
     public let tokens: String?
     public let cost: String?
     public let time: String
 }
 
-/// "SUB-AGENTS · 6" and "31% of this session's spend", over a row per model.
+/// An aggregate followed by one row per sub-agent run.
 public struct SubagentsModel: Sendable, Equatable {
     public let title: String
+    /// Makes it explicit that the key session totals already contain these runs.
+    public let inclusion: String
     public let share: String?
+    public let total: String
     public let rows: [SubagentRowModel]
 }
 
@@ -112,7 +122,8 @@ public struct SessionPanelModel: Sendable, Equatable {
     /// Whether the Open button can bring the session's terminal to the front.
     public let canOpen: Bool
     public let status: StatusModel
-    /// Spent, Tokens, Active, Turns: those the agent reported.
+    /// Total spent, Total tokens, Active, Turns: those the agent reported. The totals include
+    /// any sub-agent runs listed below.
     public let stats: [StatModel]
     public let context: BarRowModel?
     /// The agent's limit closest to running out, with this session's share of it.

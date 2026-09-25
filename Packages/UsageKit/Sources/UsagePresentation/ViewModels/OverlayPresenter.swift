@@ -35,6 +35,10 @@ public struct OverlayPresenter: Sendable {
             return StripItemModel(
                 id: summary.id,
                 ring: ring(session),
+                agentName: summary.agent.displayName,
+                project: summary.work.tag.project,
+                title: session.title,
+                firstAsk: summary.activity?.firstAsk,
                 // Short, so it fits the 30pt strip; the panel says it in full.
                 time: format.compactDuration(summary.activeDuration),
                 needsUser: summary.needsUser,
@@ -43,9 +47,13 @@ public struct OverlayPresenter: Sendable {
                 recency: byRecency[summary.id] ?? 0,
                 accessibilityLabel: [
                     session.title,
-                    summary.tokens?.total.map { "\(format.tokens($0)) tokens" },
+                    summary.agent.displayName,
+                    summary.work.tag.project,
+                    summary.activity?.firstAsk,
                     format.duration(summary.activeDuration),
-                    summary.context.map { "context \(format.percent($0.fraction))" },
+                    summary.context.map {
+                        "context \(format.tokens($0.used)) of \(format.tokens($0.window)), \(format.percent($0.fraction)) full"
+                    },
                     status(session, report: report).text.lowercased(),
                 ].compactMap { $0 }.joined(separator: ", ")
             )
@@ -78,7 +86,7 @@ public struct OverlayPresenter: Sendable {
     /// bills in credits shows its credits where the cost would be.
     func stats(_ summary: SessionSummary) -> [StatModel] {
         let spent: StatModel? = if let cost = summary.costUSD, cost > 0 {
-            StatModel(label: "Spent", value: format.usd(cost))
+            StatModel(label: "Total spent", value: format.usd(cost))
         } else if let credits = summary.credits, credits > 0 {
             StatModel(label: "Credits", value: format.credits(credits))
         } else {
@@ -86,7 +94,9 @@ public struct OverlayPresenter: Sendable {
         }
         return [
             spent,
-            summary.tokens?.total.flatMap { $0 > 0 ? StatModel(label: "Tokens", value: format.tokens($0)) : nil },
+            summary.tokens?.total.flatMap {
+                $0 > 0 ? StatModel(label: "Total tokens", value: format.tokens($0)) : nil
+            },
             summary.activeDuration >= 60 ? StatModel(label: "Active", value: format.duration(summary.activeDuration)) : nil,
             summary.turnCount > 0 ? StatModel(label: "Turns", value: "\(summary.turnCount)") : nil,
         ].compactMap { $0 }
@@ -124,36 +134,43 @@ public struct OverlayPresenter: Sendable {
         )
     }
 
-    /// The session's sub-agents by model, most runs first, with their share of the session's
-    /// spend, or of its tokens when no cost is known. Nil when it started none.
+    /// The session's sub-agents, one row per run, with an aggregate and their share of the
+    /// session's spend, or of its tokens when no cost is known. Nil when it started none.
     func subagents(_ summary: SessionSummary) -> SubagentsModel? {
         let runs = summary.subagents
         guard !runs.isEmpty else { return nil }
         let share: String? = if let cost = summary.subagentCostUSD, let total = summary.costUSD, total > 0 {
-            "\(format.percent(Share.of(cost, in: total))) of this session's spend"
+            "\(format.percent(Share.of(cost, in: total))) of session spend"
         } else if let total = summary.tokens?.total, total > 0, summary.subagentTokens > 0 {
-            "\(format.percent(Double(summary.subagentTokens) / Double(total))) of this session's tokens"
+            "\(format.percent(Double(summary.subagentTokens) / Double(total))) of session tokens"
         } else {
             nil
         }
-        let rows = Dictionary(grouping: runs, by: \.model)
-            .map { model, runs in
-                let tokens = runs.reduce(0) { $0 + ($1.tokens?.total ?? 0) }
-                let costs = runs.compactMap(\.costUSD)
-                let time = runs.reduce(0) { $0 + $1.workingTime }
-                return (
-                    runs: runs.count, tokens: tokens,
-                    row: SubagentRowModel(
-                        name: "\(model.displayName) · \(Self.count(runs.count, "run"))",
-                        tokens: tokens > 0 ? format.tokens(tokens) : nil,
-                        cost: costs.isEmpty ? nil : format.usd(costs.reduce(0, +)),
-                        time: time >= 60 ? format.duration(time) : "<1m"
-                    )
-                )
-            }
-            .sorted { ($0.runs, $0.tokens, $1.row.name) > ($1.runs, $1.tokens, $0.row.name) }
-            .map(\.row)
-        return SubagentsModel(title: "SUB-AGENTS · \(runs.count)", share: share, rows: rows)
+        let totalTokens = summary.subagentTokens
+        let totalTime = runs.reduce(0) { $0 + $1.workingTime }
+        let total = [
+            totalTokens > 0 ? format.tokens(totalTokens) : nil,
+            summary.subagentCostUSD.map(format.usd),
+            totalTime >= 60 ? format.duration(totalTime) : "<1m",
+        ].compactMap { $0 }.joined(separator: " · ") + " combined"
+        let rows = runs.enumerated().map { index, run in
+            let tokens = run.tokens?.total
+            return SubagentRowModel(
+                id: run.id,
+                model: run.model.displayName,
+                run: "Run \(index + 1)",
+                tokens: tokens.flatMap { $0 > 0 ? format.tokens($0) : nil },
+                cost: run.costUSD.map(format.usd),
+                time: run.workingTime >= 60 ? format.duration(run.workingTime) : "<1m"
+            )
+        }
+        return SubagentsModel(
+            title: "SUB-AGENT RUNS · \(runs.count)",
+            inclusion: "Included in session totals",
+            share: share,
+            total: total,
+            rows: rows
+        )
     }
 
     /// "5-hour limit", "Week limit", "Month limit", "Plan".
@@ -209,11 +226,11 @@ public struct OverlayPresenter: Sendable {
     // MARK: - Shared pieces
 
     func ring(_ session: SessionReport) -> RingModel {
-        let tokens = session.summary.tokens?.total ?? 0
+        let context = session.summary.context
         return RingModel(
-            // Short enough for the ring; the panel shows the whole number.
-            label: tokens > 0 ? format.ringTokens(tokens) : session.code,
-            fraction: session.summary.context?.fraction ?? 0,
+            // The label and arc always describe the same live context reading.
+            label: context.map { format.ringTokens($0.used) } ?? session.code,
+            fraction: context?.fraction ?? 0,
             isNearlyFull: session.isContextNearlyFull,
             agent: session.summary.agent
         )

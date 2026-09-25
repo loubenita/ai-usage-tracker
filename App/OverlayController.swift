@@ -13,8 +13,8 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
 /// closing on a click outside, closing on Esc, and following screen changes.
 @MainActor
 final class OverlayController {
-    /// Room for the strip, the gap, the 320pt panel and the soft glass shadow.
-    private static let width: CGFloat = 68 + 8 + 320 + 32
+    /// Room for the expanded strip, the panel and the soft glass shadow.
+    private static let width = StripLayout.overlayWidth
 
     private let viewModel: OverlayViewModel
     private let launchState: LaunchState

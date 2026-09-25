@@ -108,10 +108,11 @@ enum GlassStyle {
 }
 
 extension View {
-    /// A panel: 320pt wide, its content inset 16pt, on glass and nothing else.
+    /// A panel wide enough for descriptive labels and individual sub-agent metrics, with its
+    /// content inset 16pt, on glass and nothing else.
     func glassPanel(padding: CGFloat = 16) -> some View {
         self.padding(padding)
-            .frame(width: 320, alignment: .leading)
+            .frame(width: StripLayout.panelWidth, alignment: .leading)
             .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.panelRadius))
     }
 
