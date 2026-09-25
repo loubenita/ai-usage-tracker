@@ -46,6 +46,8 @@ Click a ring.
 
 It shows what the session is doing and where it runs, total spend and tokens, active time and turns, the context with when it will be full at this pace, and the limit closest to running out. **Show details** reveals the token mix, pace, model, branch and first ask without crowding the default view. It also lists every sub-agent run separately with its tokens, cost and time, plus a combined total and an explicit reminder that those runs are already included in the session totals.
 
+[See the expanded details with all six sub-agent runs and the session facts.](docs/images/session-details.png)
+
 **Open** brings that session's terminal to the front. Inside tmux it moves tmux to the session's pane, in the tab you are looking at; in Terminal it selects the tab with the session's TTY; for Warp, iTerm and Ghostty it brings the app forward, since their tabs cannot be chosen from outside. It never types into your terminal, and what it did is written to `~/Library/Application Support/AIUsageTracker/open.log`.
 
 ### Usage
