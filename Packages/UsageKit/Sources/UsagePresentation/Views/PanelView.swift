@@ -1,12 +1,18 @@
 import SwiftUI
 
-/// The panel a session opens: who and what, status, totals, context and the tightest limit stay
-/// visible. Token breakdowns, individual sub-agent runs and supporting facts sit behind one
+/// The panel a session opens: who and what, status, totals and context stay visible. Token
+/// breakdowns, individual sub-agent runs and supporting facts sit behind one
 /// disclosure so the useful depth does not crowd the session's current state.
 struct PanelView: View {
     let model: SessionPanelModel
     let onOpen: () -> Void
-    @State private var showsDetails = false
+    @State private var showsDetails: Bool
+
+    init(model: SessionPanelModel, initiallyShowsDetails: Bool = false, onOpen: @escaping () -> Void) {
+        self.model = model
+        self.onOpen = onOpen
+        _showsDetails = State(initialValue: initiallyShowsDetails)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -15,10 +21,9 @@ struct PanelView: View {
             if !model.stats.isEmpty {
                 StatsRow(stats: model.stats)
             }
-            if model.context != nil || model.limit != nil {
+            if model.context != nil {
                 VStack(alignment: .leading, spacing: 10) {
                     if let context = model.context { BarRow(model: context) }
-                    if let limit = model.limit { BarRow(model: limit, agent: model.agent) }
                 }
                 .sectionDivider()
             }
@@ -29,6 +34,12 @@ struct PanelView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             CapsHeader(title: "TOKEN BREAKDOWN")
                             TokenMixView(segments: model.tokenMix)
+                            if let note = model.tokenMixNote {
+                                Text(note)
+                                    .font(TypeScale.captionFont)
+                                    .foregroundStyle(Theme.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     if let subagents = model.subagents {
@@ -48,7 +59,7 @@ struct PanelView: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    AgentDot(agent: model.agent)
+                    AgentMark(agent: model.agent)
                     Text(model.subtitle)
                         .font(TypeScale.secondaryFont)
                         .foregroundStyle(Theme.secondary)
@@ -61,8 +72,8 @@ struct PanelView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            if model.canOpen {
-                OpenButton(action: onOpen)
+            if let action = model.openAction {
+                OpenButton(model: action, action: onOpen)
             }
         }
     }
@@ -176,15 +187,34 @@ private struct SessionDetailsView: View {
 
 /// "↗" in a round button: brings the session's terminal to the front.
 private struct OpenButton: View {
+    let model: SessionOpenAction
     let action: () -> Void
 
     var body: some View {
-        Image(systemName: "arrow.up.right")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Theme.primary)
-            .frame(width: 36, height: 36)
-            .background(Circle().fill(Theme.lift(0.16)))
-            .help("Open the session's terminal")
-            .clickable("Open the session's terminal", action: action)
+        HStack(spacing: 5) {
+            Image(systemName: "arrow.up.right")
+            Text(title)
+        }
+        .font(TypeScale.font(TypeScale.caption, .semibold))
+        .foregroundStyle(Theme.primary)
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(Capsule().fill(Theme.lift(0.16)))
+        .help(help)
+        .clickable(help, action: action)
+    }
+
+    private var title: String {
+        switch model {
+        case .session: "Open"
+        case .terminal: "Bring forward"
+        }
+    }
+
+    private var help: String {
+        switch model {
+        case .session: "Open this session's terminal"
+        case .terminal(let name): "Bring \(name) forward; its exact tab cannot be selected"
+        }
     }
 }

@@ -6,7 +6,7 @@ public protocol UsageRepository: Sendable {
     /// Everything from `start` to `end`: the open sessions and every past session's turns.
     func records(from start: Date, to end: Date) async throws -> UsageRecords
     /// The open sessions only, with their own turns and none of the history's, so the strip
-    /// can be read every couple of seconds without copying a month of turns.
+    /// can be read every six seconds without copying a month of turns.
     func sessionRecords(from start: Date, to end: Date) async throws -> UsageRecords
     func settings() async throws -> UsageSettings
 }

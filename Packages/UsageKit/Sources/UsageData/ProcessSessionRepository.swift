@@ -78,7 +78,7 @@ public struct ProcessSessionRepository: UsageRepository {
     )
 
     /// A session's own files are read again at most this often by default; the process list,
-    /// which says which sessions are open, is read on every call.
+    /// which says which sessions are open, is read on every lightweight call.
     public static let defaultFilesInterval: TimeInterval = 6
     private let filesInterval: TimeInterval
 
@@ -107,7 +107,9 @@ public struct ProcessSessionRepository: UsageRepository {
         subagentTranscripts.keepOnly(live.subagentTranscripts)
         rollouts.keepOnly(live.rollouts)
 
-        let past = history.current(now: now)
+        // Only the slower totals refresh is allowed to schedule a history scan and cache save.
+        // The frequent session refresh consumes the last completed snapshot.
+        let past = includeHistory ? history.current(now: now) : history.latest()
         let inRange = { (date: Date) in date >= start && date <= end }
         // The history's copy of a live session's replies is replaced by the live one, which is
         // newer and carries the live session's id.

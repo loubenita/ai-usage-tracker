@@ -29,7 +29,11 @@ final class OverlayController {
 
         // The overlay's window never becomes key, so the first click in it would otherwise be
         // spent activating rather than pressing what is under the pointer.
-        let host = FirstMouseHostingView(rootView: OverlayView(viewModel: viewModel) { NSApp.terminate(nil) })
+        let host = FirstMouseHostingView(rootView: OverlayView(
+            viewModel: viewModel,
+            initiallyShowsSessionDetails: launchState.showsSessionDetails,
+            locksExpandedStrip: launchState.target == .hover
+        ) { NSApp.terminate(nil) })
         host.sizingOptions = []
         panel.contentView = host
     }
@@ -116,7 +120,7 @@ final class OverlayController {
             viewModel.pointerOverStrip(true)
         case .drag?:
             viewModel.beginStripDrag()
-            viewModel.dragStrip(to: -120, limit: 300)
+            viewModel.dragStrip(to: StripLayout.forcedDragOffset, limit: 300)
         case .open(let id)?:
             viewModel.click(id)
         case .usage(let period, let filter)?:

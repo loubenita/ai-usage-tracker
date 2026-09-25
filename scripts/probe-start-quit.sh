@@ -3,8 +3,8 @@
 #
 # Launches the app on real data in the hover state, starts a stand-in `claude` (/bin/sleep
 # run under the name claude, so none of the owner's Claude hooks run) in a detached session
-# on a private tmux server, and screenshots the app window before, 2 seconds after the start,
-# and 2 seconds after the stand-in quits. The `ps` output at each moment is saved beside each
+# on a private tmux server, and screenshots the app window before, 7 seconds after the start,
+# and 7 seconds after the stand-in quits. The `ps` output at each moment is saved beside each
 # picture. Nothing is typed into any window and the owner's own tmux server is not touched.
 #
 #   scripts/probe-start-quit.sh [output dir]    (default ~/.claude/proof/ai-usage-tracker/build-2)
@@ -57,11 +57,11 @@ while [ -z "$standin" ]; do
   standin="$(pgrep -f '^claude 600$' || true)"
 done
 echo "$(now) stand-in is pid $standin"
-sleep 2
-snap 4-two-seconds-after-start
+sleep 7
+snap 4-seven-seconds-after-start
 echo "$(now) quitting it"
 kill "$standin"
 while kill -0 "$standin" 2>/dev/null; do :; done
 echo "$(now) stand-in has exited"
-sleep 2
-snap 5-two-seconds-after-quit
+sleep 7
+snap 5-seven-seconds-after-quit

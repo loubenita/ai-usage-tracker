@@ -80,6 +80,13 @@ final class UsageHistory: Sendable {
         }
     }
 
+    /// The most recently completed history snapshot without scheduling another disk scan.
+    /// The lightweight open-session refresh uses this so it cannot wake the month reader or
+    /// rewrite the large cache every few seconds.
+    func latest() -> Snapshot {
+        state.withLock { $0.snapshot }
+    }
+
     /// The last history read, starting a new read in the background when one is due.
     ///
     /// With a saved cache, the first read is done right here instead: only what the files gained

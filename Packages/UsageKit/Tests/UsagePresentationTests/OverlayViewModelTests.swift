@@ -148,7 +148,7 @@ struct OverlayViewModelTests {
         )
         await viewModel.load()
         viewModel.click("s_img")
-        #expect(viewModel.panel?.canOpen == true)
+        #expect(viewModel.panel?.openAction == .terminal("Warp"))
         viewModel.openTerminal("s_img")
         #expect(opener.opened.map(\.terminal) == [.warp])
         // A session with no known terminal has nothing to open.
@@ -216,6 +216,10 @@ private actor CountingRepository: UsageRepository {
 @MainActor
 @Suite("Refreshing each part as often as it changes")
 struct RefreshScheduleTests {
+    @Test func liveSessionDiscoveryUsesTheSixSecondDefault() {
+        #expect(OverlayViewModel.defaultReloadInterval == 6)
+    }
+
     fileprivate func make(historyComplete: Bool = true) -> (OverlayViewModel, CountingRepository, Date) {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
@@ -231,7 +235,7 @@ struct RefreshScheduleTests {
         #expect(viewModel.totalsBuilds == 1)
         #expect(await repository.fullReads == 1)
         let month = viewModel.report?.month
-        // The one-second tick and the two-second read of the open sessions leave the totals be.
+        // The one-second tick and the six-second read of the open sessions leave the totals be.
         viewModel.refresh()
         viewModel.refresh()
         await viewModel.loadSessions()

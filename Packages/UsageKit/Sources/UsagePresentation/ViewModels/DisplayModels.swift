@@ -21,12 +21,9 @@ public struct RingModel: Sendable, Equatable {
 public struct StripItemModel: Sendable, Equatable, Identifiable {
     public let id: String
     public let ring: RingModel
-    /// The expanded strip's at-a-glance identity.
-    public let agentName: String
-    public let project: String
+    /// The expanded strip's short task identity. Provider identity is carried by the icon and
+    /// colour beside it, with the provider name in the accessibility label.
     public let title: String
-    /// The person's first request, when the session record supplies it.
-    public let firstAsk: String?
     public let time: String
     public let needsUser: Bool
     /// The amber dot pulses until the item has been hovered once.
@@ -83,8 +80,15 @@ public enum SegmentStyle: Sendable, Equatable {
 
 public struct TokenSegmentModel: Sendable, Equatable {
     public let style: SegmentStyle
-    public let fraction: Double
     public let label: String
+    public let value: String
+}
+
+public enum SessionOpenAction: Sendable, Equatable {
+    /// The terminal integration can select this exact session.
+    case session
+    /// The terminal app can be brought forward, but its exact tab cannot be selected.
+    case terminal(String)
 }
 
 public struct DetailRowModel: Sendable, Equatable {
@@ -116,19 +120,19 @@ public struct SubagentsModel: Sendable, Equatable {
 public struct SessionPanelModel: Sendable, Equatable {
     public let sessionID: String
     public let agent: Agent
-    /// "Claude · Marketing Studio".
+    /// The selected session's project, such as "Marketing Studio". The provider is its mark.
     public let subtitle: String
     public let title: String
-    /// Whether the Open button can bring the session's terminal to the front.
-    public let canOpen: Bool
+    /// What the panel can truthfully promise when its terminal button is pressed.
+    public let openAction: SessionOpenAction?
     public let status: StatusModel
     /// Total spent, Total tokens, Active, Turns: those the agent reported. The totals include
     /// any sub-agent runs listed below.
     public let stats: [StatModel]
     public let context: BarRowModel?
-    /// The agent's limit closest to running out, with this session's share of it.
-    public let limit: BarRowModel?
     public let tokenMix: [TokenSegmentModel]
+    /// Explains why a small uncached input can sit beside a much larger cache read.
+    public let tokenMixNote: String?
     /// Nil when the session started no sub-agents.
     public let subagents: SubagentsModel?
     public let details: [DetailRowModel]

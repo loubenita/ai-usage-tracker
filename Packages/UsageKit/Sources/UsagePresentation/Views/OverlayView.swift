@@ -11,13 +11,24 @@ public struct OverlayView: View {
     /// What the right-click menu's one item does. The app has no Dock icon or menu bar item,
     /// so this menu is the only way to quit it.
     private let onQuit: () -> Void
+    /// Screenshot launches may reveal the selected session's disclosure without pointer input.
+    private let initiallyShowsSessionDetails: Bool
+    /// Keeps the forced hover screenshot expanded when the real pointer is elsewhere.
+    private let locksExpandedStrip: Bool
     /// The strip's height as drawn, and its height while it rests, whose edge growth keeps.
     @State private var stripHeight: CGFloat = 0
     @State private var restStripHeight: CGFloat = 0
     @State private var panelHeight: CGFloat = 0
 
-    public init(viewModel: OverlayViewModel, onQuit: @escaping () -> Void = {}) {
+    public init(
+        viewModel: OverlayViewModel,
+        initiallyShowsSessionDetails: Bool = false,
+        locksExpandedStrip: Bool = false,
+        onQuit: @escaping () -> Void = {}
+    ) {
         self.viewModel = viewModel
+        self.initiallyShowsSessionDetails = initiallyShowsSessionDetails
+        self.locksExpandedStrip = locksExpandedStrip
         self.onQuit = onQuit
     }
 
@@ -54,9 +65,12 @@ public struct OverlayView: View {
                         model: model,
                         availableHeight: availableHeight,
                         offset: strip.offset,
+                        dragOrigin: viewModel.stripOffset,
                         isDragging: viewModel.isDraggingStrip,
                         restHeight: restStripHeight,
-                        onPointer: { viewModel.pointerOverStrip($0) },
+                        onPointer: { inside in
+                            if !locksExpandedStrip { viewModel.pointerOverStrip(inside) }
+                        },
                         onHover: { id, inside in
                             inside ? viewModel.hover(id) : viewModel.endHover(id)
                         },
@@ -88,7 +102,11 @@ public struct OverlayView: View {
                 onRefresh: { viewModel.refreshTotalsNow() }
             )
         } else if let panel = viewModel.panel {
-            PanelView(model: panel, onOpen: { viewModel.openTerminal(panel.sessionID) })
+            PanelView(
+                model: panel,
+                initiallyShowsDetails: initiallyShowsSessionDetails,
+                onOpen: { viewModel.openTerminal(panel.sessionID) }
+            )
         }
     }
 }

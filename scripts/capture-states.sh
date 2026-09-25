@@ -83,6 +83,7 @@ else
   capture rest 1-rest.build
   capture hover 2-hover.build
   capture open-session 3-open-session.build
+  capture open-session-details 3-session-details.build
   # The usage panel as frames 4 to 6 draw it: All on Today, Claude on Week, Cursor on Month.
   capture open-today 4-open-today.build
   capture open-week 5-open-week-claude.build --agent claude-code
