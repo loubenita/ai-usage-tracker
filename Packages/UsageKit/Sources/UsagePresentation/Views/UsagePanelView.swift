@@ -1,7 +1,7 @@
 import SwiftUI
 import UsageDomain
 
-/// The usage button's 320pt panel, as Paper frames 4 to 6 draw it: an agent picker, the
+/// The usage button's shared-width panel, as Paper frames 4 to 6 draw it: an agent picker, the
 /// period tabs with the refresh countdown, then every agent together or one on its own.
 struct UsagePanelView: View {
     let model: UsagePanelModel

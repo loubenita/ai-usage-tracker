@@ -2,7 +2,7 @@
 
 A small macOS overlay on the right edge of your screen that shows the AI coding agents running in your terminals: what each session is costing, how full its context is, and which plan limit runs out first. It reads the files Claude Code, Codex, Cursor Agent and Kiro already keep on your Mac. It has no Dock icon and no menu bar item.
 
-<img src="docs/images/strip.png" alt="The strip at rest and under the pointer: three rings showing 640k, 280k and 1.1M tokens with times 1h47, 23m and 58m, and the usage button under them" width="260">
+<img src="docs/images/strip.png" alt="The strip at rest and under the pointer: context rings with session times and the usage button" width="260">
 
 ## Install
 
@@ -31,10 +31,10 @@ To quit the app, right-click the strip or a panel and choose **Quit**.
 
 ### The strip
 
-At rest it is a half strip on the screen's edge, listing the five sessions whose work changed most recently with a "+N" band for the rest. Move the pointer over it and it grows.
+At rest it is a half strip on the screen's edge, listing the five sessions whose work changed most recently with a "+N" band for the rest. Move the pointer over it and it grows into a readable list with the agent, project, task, first ask when available, and active time for every session.
 
 - Each ring fills as that session's context fills, turns red when it is nearly full, and carries its agent's colour.
-- Inside the ring are the session's tokens: `79k`, `1.1M`, `444M`.
+- Inside the ring is the current context in use: the number and the fill describe the same reading. Cumulative session tokens stay in the session panel.
 - An amber dot means the session is waiting for your reply.
 - Drag the small bar at the top, or hold anywhere on the strip for five seconds, to move it up or down the edge. It stays where you drop it.
 
@@ -42,9 +42,11 @@ At rest it is a half strip on the screen's edge, listing the five sessions whose
 
 Click a ring.
 
-<img src="docs/images/session.png" alt="A session panel: Claude on Marketing Studio, waiting for your reply, $1.10 spent, 280k tokens, 23m active, 18 turns, context 34%, the 5-hour limit at 62%, the token mix, its sub-agents and the details" width="330">
+<img src="docs/images/session.png" alt="A session panel: Claude on Marketing Studio, waiting for your reply, total spend and tokens, context, the nearest limit, and a Show details control" width="330">
 
-It shows what the session is doing and where it runs, its spend, tokens, active time and turns, the context with when it will be full at this pace, the limit closest to running out with the share of it this session used, the token mix, the sub-agents it started, and its pace, model, branch and first ask.
+It shows what the session is doing and where it runs, total spend and tokens, active time and turns, the context with when it will be full at this pace, and the limit closest to running out. **Show details** reveals the token mix, pace, model, branch and first ask without crowding the default view. It also lists every sub-agent run separately with its tokens, cost and time, plus a combined total and an explicit reminder that those runs are already included in the session totals.
+
+[See the expanded details with all six sub-agent runs and the session facts.](docs/images/session-details.png)
 
 **Open** brings that session's terminal to the front. Inside tmux it moves tmux to the session's pane, in the tab you are looking at; in Terminal it selects the tab with the session's TTY; for Warp, iTerm and Ghostty it brings the app forward, since their tabs cannot be chosen from outside. It never types into your terminal, and what it did is written to `~/Library/Application Support/AIUsageTracker/open.log`.
 

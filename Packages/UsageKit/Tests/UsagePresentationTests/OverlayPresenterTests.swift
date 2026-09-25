@@ -28,12 +28,15 @@ struct OverlayPresenterTests {
 
     // MARK: - Frames 1 and 2: the strip
 
-    @Test func theRingsShowEachSessionsTokens() async throws {
+    @Test func theRingsShowCurrentContextInsteadOfCumulativeTokens() async throws {
         let strip = presenter.strip(try await Self.fakeReport(), hovered: nil, open: nil, acknowledged: [])
-        #expect(strip.items.map(\.ring.label) == ["640k", "280k", "1.1M"])
-        // The panel shows the whole number, where there is room for it.
+        // The text and the fill now describe the same reading. These sessions have accumulated
+        // 640k, 280k and 1.1M tokens, while their live contexts are 142k, 68k and 184k.
+        #expect(strip.items.map(\.ring.label) == ["142k", "68k", "184k"])
+        #expect(strip.items.map(\.ring.fraction) == [0.71, 0.34, 0.92])
+        // The panel keeps the cumulative number and names it as a total.
         #expect(presenter.panel(try await Self.fakeReport(), sessionID: "s_bug")?.stats
-            .first { $0.label == "Tokens" }?.value == "1.1M")
+            .first { $0.label == "Total tokens" }?.value == "1.1M")
         // Short enough for the 30pt strip; the panel says "1h 47m" in full.
         #expect(strip.items.map(\.time) == ["1h47", "23m", "58m"])
         #expect(strip.items.map(\.ring.isNearlyFull) == [false, false, true])
@@ -41,6 +44,15 @@ struct OverlayPresenterTests {
         #expect(strip.items.map(\.needsUser) == [false, true, false])
         #expect(strip.items.map(\.pulses) == [false, true, false])
         #expect(strip.items.allSatisfy { $0.highlight == .none })
+    }
+
+    @Test func theExpandedStripIdentifiesAgentProjectTaskAndFirstAsk() async throws {
+        let strip = presenter.strip(try await Self.fakeReport(), hovered: nil, open: nil, acknowledged: [])
+        #expect(strip.items.map(\.agentName) == ["Claude", "Claude", "Codex"])
+        #expect(strip.items.map(\.project) == ["Marketing Studio", "Marketing Studio", "OpenKitchen"])
+        #expect(strip.items.map(\.title) == ["Video generation", "Image generation", "Bug fixes"])
+        #expect(strip.items.map(\.firstAsk) == [nil, "Add retry to the image generation call", nil])
+        #expect(strip.items[1].accessibilityLabel.contains("Add retry to the image generation call"))
     }
 
     @Test func theRestingStripListsTheSessionsThatWereBusyMostRecently() async throws {
@@ -60,10 +72,18 @@ struct OverlayPresenterTests {
         #expect(open.items[1].highlight == .selected)
     }
 
-    @Test func aSessionWithNoTokensShowsItsLabelInTheRing() throws {
-        let report = detected(turns: [])
+    @Test func aSessionWithNoContextShowsItsLabelInTheRing() throws {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        let tag = WorkTag(project: "ai-usage-tracker", concern: "main")
+        let turn = Turn(
+            id: "t", timestamp: start + 60, agent: .claudeCode, sessionID: "claude-code-3857",
+            model: "claude-opus-5", work: Work(tag: tag), tokens: TokenUsage(cacheRead: 5_000_000),
+            cost: Cost(usd: nil), context: nil
+        )
+        let report = detected(turns: [turn])
         let strip = presenter.strip(report, hovered: nil, open: nil, acknowledged: [])
-        #expect(strip.items.map(\.ring.label) == ["AIUT"])
+        // Even with 5M cumulative tokens, a missing context never makes the ring say "5M".
+        #expect(strip.items.map(\.ring.label) == ["MAI"])
         #expect(strip.items.map(\.time) == ["1h30"])
     }
 
@@ -77,7 +97,7 @@ struct OverlayPresenterTests {
         #expect(panel.canOpen)
         #expect(panel.status == StatusModel(kind: .waiting, text: "Waiting for your reply · 4m", place: "Warp"))
         #expect(panel.stats == [
-            StatModel(label: "Spent", value: "$1.10"), StatModel(label: "Tokens", value: "280k"),
+            StatModel(label: "Total spent", value: "$1.10"), StatModel(label: "Total tokens", value: "280k"),
             StatModel(label: "Active", value: "23m"), StatModel(label: "Turns", value: "18"),
         ])
         #expect(panel.context?.title == "Context 34%")
@@ -88,11 +108,17 @@ struct OverlayPresenterTests {
         // The session's own replies and its sub-agents' together.
         #expect(panel.tokenMix.map(\.label) == ["In 52k", "Out 14k", "Cache read 200k", "Cache write 14k"])
         #expect(panel.subagents == SubagentsModel(
-            title: "SUB-AGENTS · 6",
-            share: "31% of this session's spend",
+            title: "SUB-AGENT RUNS · 6",
+            inclusion: "Included in session totals",
+            share: "31% of session spend",
+            total: "137k · $0.34 · 15m combined",
             rows: [
-                SubagentRowModel(name: "Sonnet 5 · 4 runs", tokens: "96k", cost: "$0.29", time: "12m"),
-                SubagentRowModel(name: "Haiku 4.5 · 2 runs", tokens: "41k", cost: "$0.05", time: "3m"),
+                SubagentRowModel(id: "agent-1", model: "Sonnet 5", run: "Run 1", tokens: "24k", cost: "$0.08", time: "3m"),
+                SubagentRowModel(id: "agent-2", model: "Sonnet 5", run: "Run 2", tokens: "24k", cost: "$0.07", time: "3m"),
+                SubagentRowModel(id: "agent-3", model: "Sonnet 5", run: "Run 3", tokens: "24k", cost: "$0.07", time: "3m"),
+                SubagentRowModel(id: "agent-4", model: "Sonnet 5", run: "Run 4", tokens: "24k", cost: "$0.07", time: "3m"),
+                SubagentRowModel(id: "agent-5", model: "Haiku 4.5", run: "Run 5", tokens: "21k", cost: "$0.03", time: "1m"),
+                SubagentRowModel(id: "agent-6", model: "Haiku 4.5", run: "Run 6", tokens: "21k", cost: "$0.02", time: "1m"),
             ]
         ))
         // The pace is the session's own replies only; the frame's 310k/h is not in the made-up data.
@@ -187,7 +213,7 @@ struct OverlayPresenterTests {
         let report = GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 600)
         let panel = try #require(presenter.panel(report, sessionID: "k"))
         #expect(panel.stats.first == StatModel(label: "Credits", value: "0.8"))
-        #expect(!panel.stats.contains { $0.label == "Tokens" })
+        #expect(!panel.stats.contains { $0.label == "Total tokens" })
         // Its plan is its tightest limit, and it resets at midnight on the 1st.
         #expect(panel.limit?.title == "Plan 42%")
         #expect(panel.limit?.detail == "resets 1 Oct")
@@ -254,15 +280,20 @@ struct OverlayPresenterTests {
         let priced = try #require(presenter.panel(report(ownCost: 1, runs: [
             SubagentRun(id: "a", model: "claude-sonnet-5", tokens: TokenUsage(input: 3_000), costUSD: 1, workingTime: 60),
         ]), sessionID: "s"))
-        #expect(priced.subagents?.share == "25% of this session's spend")
-        #expect(priced.subagents?.title == "SUB-AGENTS · 1")
+        #expect(priced.subagents?.share == "25% of session spend")
+        #expect(priced.subagents?.title == "SUB-AGENT RUNS · 1")
+        #expect(priced.subagents?.inclusion == "Included in session totals")
+        #expect(priced.subagents?.total == "3k · $1.00 · 1m combined")
         // Without a cost, their share of the tokens: 4,000 of 10,000. A run under a minute
         // says so rather than "0m".
         let unpriced = try #require(presenter.panel(report(ownCost: nil, runs: [
             SubagentRun(id: "a", model: "gpt-5.6", tokens: TokenUsage(input: 4_000), costUSD: nil, workingTime: 20),
         ]), sessionID: "s"))
-        #expect(unpriced.subagents?.share == "40% of this session's tokens")
-        #expect(unpriced.subagents?.rows == [SubagentRowModel(name: "gpt-5.6 · 1 run", tokens: "4k", cost: nil, time: "<1m")])
+        #expect(unpriced.subagents?.share == "40% of session tokens")
+        #expect(unpriced.subagents?.total == "4k · <1m combined")
+        #expect(unpriced.subagents?.rows == [
+            SubagentRowModel(id: "a", model: "gpt-5.6", run: "Run 1", tokens: "4k", cost: nil, time: "<1m")
+        ])
         // A session with no sub-agents has no section at all.
         #expect(presenter.panel(report(ownCost: 1, runs: []), sessionID: "s")?.subagents == nil)
     }

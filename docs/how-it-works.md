@@ -94,6 +94,7 @@ If you already have a status line, keep it by setting `AIUT_STATUSLINE_NEXT` to 
 The table of what each agent gives is in the [README](../README.md#what-each-agent-gives).
 
 - **Each agent's ring has its own colour,** so you can tell a Codex session from a Claude one at a glance. The colours are all cool ones, so none of them can be mistaken for the amber "waiting for you" dot or the red "context nearly full" ring, which still take over when they apply.
+- **The ring's number is current context used,** from the same reading as its fill. The expanded strip also names the agent, project and task, and includes the first ask when the agent records it. The larger cumulative token count appears only as `Total tokens` in the session panel.
 - **Antigravity** runs as a desktop app, not in a terminal. Starting a conversation in it means typing into its window. It saves its conversations in `~/.gemini/antigravity/conversations/` as encrypted files: they look completely random, with no readable text, so the app cannot read their usage.
 
 - **The limits list shows every window every agent shares,** as a share used rather than left: "Claude 5-hour 62%, frees up 16:40", "Codex week 95%, frees up Thu". A window at 85% or more turns amber, so the one about to run out stands out. Kiro's monthly plan, in credits, is a row like any other.
@@ -106,7 +107,7 @@ The table of what each agent gives is in the [README](../README.md#what-each-age
 - **Monthly limits.** Only Kiro's plan is monthly. Claude and Codex report none, so they have no monthly bar on real data.
 - **Budgets.** There is no setting for a daily budget yet, so on real data Today shows no budget and the week chart has no budget line. The made-up data has $9 and 2.6M-token budgets, to show how they would look.
 - **Where the time went** lists the biggest pieces of work by working time — the gaps between replies, up to five minutes each — and adds up the rest in one row, such as "4 more". Time is used rather than cost, so agents whose price is unknown count for as much as the others.
-- **Sub-agents** are the agents a session started itself. Claude Code keeps each one's transcript in `<session id>/subagents/` beside the session's own. Their tokens and cost count in the session's Spent and Tokens, and the section says what share they are. They are left out of the session's pace, which measures what the session itself is doing.
+- **Sub-agents** are the agents a session started itself. Claude Code keeps each one's transcript in `<session id>/subagents/` beside the session's own. Their tokens and cost count in the session's `Total spent` and `Total tokens`. Under **Show details**, the panel says this explicitly, keeps the combined sub-agent total and share, and lists tokens, cost and working time for each run. Sub-agents remain left out of the session's pace, which measures what the main session itself is doing.
 
 ## Architecture
 

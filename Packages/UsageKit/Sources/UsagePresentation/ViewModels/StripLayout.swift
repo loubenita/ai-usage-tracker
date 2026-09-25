@@ -3,6 +3,13 @@ import CoreGraphics
 /// How many sessions the strip shows: at rest the few most recently busy, and never more
 /// than the screen has room for.
 public enum StripLayout {
+    /// The expanded strip leaves room for the agent, project and task instead of showing
+    /// anonymous rings. Session and usage panels use the same wider reading column.
+    public static let expandedWidth: CGFloat = 224
+    public static let panelWidth: CGFloat = 360
+    /// Expanded strip + gap + panel + room for the soft glass shadow.
+    public static let overlayWidth: CGFloat = expandedWidth + 8 + panelWidth + 32
+
     /// The resting strip lists this many sessions, the most recently busy first, and counts
     /// the rest in a "+N" item.
     public static let restLimit = 5

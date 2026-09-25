@@ -3,7 +3,8 @@ import SwiftUI
 /// The glass strip on the right edge. It touches the screen edge, so only its left corners
 /// are rounded. At rest it is the half strip of Paper frame 1: 30pt wide, each session's ring
 /// cut in half by the screen edge. With the pointer over it, or a panel open, it grows into
-/// the full strip of frame 2: whole rings with each session's tokens inside, and the usage button.
+/// the full strip of frame 2: whole context rings plus each session's agent, project and task,
+/// and the usage button.
 ///
 /// When there are more sessions than the screen has room for, the half strip shows as many
 /// as fit and a "+N" item for the rest, and the full strip scrolls.
@@ -207,11 +208,9 @@ private struct FullStrip<Handle: View>: View {
     let handle: Handle
 
     var body: some View {
-        // Frame 2: 14pt above the first ring, 10pt between items, 12pt above the usage button
-        // and 12pt under it. Every item carries 6pt above and below for the selected highlight,
-        // so selecting one never moves the items below it; the spacing takes that back out.
+        // The expanded strip is a readable session list rather than a column of anonymous rings.
         VStack(spacing: 0) {
-            handle.frame(width: 68)
+            handle.frame(width: StripLayout.expandedWidth)
             // All the items when they fit; otherwise the same items in a list that scrolls.
             ViewThatFits(in: .vertical) {
                 items
@@ -222,7 +221,7 @@ private struct FullStrip<Handle: View>: View {
                 .padding(.top, 6)
                 .padding(.bottom, 12)
         }
-        .frame(width: 68)
+        .frame(width: StripLayout.expandedWidth)
         // One piece of glass, rounded on the left only: it touches the screen's edge.
         .glassEffect(
             GlassStyle.glass(),
@@ -233,7 +232,7 @@ private struct FullStrip<Handle: View>: View {
     }
 
     private var items: some View {
-        VStack(spacing: -2) {
+        VStack(spacing: 2) {
             ForEach(model.items) { item in
                 StripItemView(item: item)
                     .onHover { inside in onHover(item.id, inside) }
@@ -247,27 +246,57 @@ private struct StripItemView: View {
     let item: StripItemModel
 
     var body: some View {
-        VStack(spacing: 5) {
-            SessionRing(model: item.ring)
-                .overlay(alignment: .topTrailing) {
-                    if item.needsUser {
-                        NeedsYouDot(pulses: item.pulses)
-                            .offset(x: -1, y: 1)
+        HStack(alignment: .top, spacing: 10) {
+            VStack(spacing: 5) {
+                SessionRing(model: item.ring)
+                    .overlay(alignment: .topTrailing) {
+                        if item.needsUser {
+                            NeedsYouDot(pulses: item.pulses)
+                                .offset(x: -1, y: 1)
+                        }
                     }
+                Text(item.time)
+                    .font(TypeScale.font(TypeScale.caption, .medium))
+                    .foregroundStyle(Theme.timer)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .staticDigits()
+            }
+            .frame(width: 42)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    AgentDot(agent: item.ring.agent)
+                    Text(item.agentName)
+                        .font(TypeScale.font(TypeScale.caption, .semibold))
+                        .foregroundStyle(Theme.name)
                 }
-            Text(item.time)
-                .font(TypeScale.font(TypeScale.secondary, .medium))
-                .foregroundStyle(Theme.timer)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .padding(.horizontal, 4)
-                .staticDigits()
+                Text(item.project)
+                    .font(TypeScale.captionFont)
+                    .foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(item.title)
+                    .font(TypeScale.font(TypeScale.body, .semibold))
+                    .foregroundStyle(Theme.primary)
+                    .lineLimit(1)
+                if let firstAsk = item.firstAsk {
+                    Text(firstAsk)
+                        .font(TypeScale.captionFont)
+                        .foregroundStyle(Theme.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 6)
-        .frame(width: 56)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(width: StripLayout.expandedWidth - 8, alignment: .leading)
         // The item under the pointer or open is lifted, more when open.
         .background(RoundedRectangle(cornerRadius: 14).fill(highlightFill))
-        .frame(width: 68)
+        .frame(width: StripLayout.expandedWidth)
         .contentShape(.rect)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.accessibilityLabel)
@@ -288,15 +317,22 @@ private struct UsageButton: View {
     let action: () -> Void
 
     var body: some View {
-        Canvas { context, _ in
-            for bar in [(1.5, 8.0, 6.5), (6.5, 4.0, 10.5), (11.5, 1.5, 13.0)] {
-                let rect = CGRect(x: bar.0, y: bar.1, width: 3, height: bar.2)
-                context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(Theme.primary))
+        HStack(spacing: 8) {
+            Canvas { context, _ in
+                for bar in [(1.5, 8.0, 6.5), (6.5, 4.0, 10.5), (11.5, 1.5, 13.0)] {
+                    let rect = CGRect(x: bar.0, y: bar.1, width: 3, height: bar.2)
+                    context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(Theme.primary))
+                }
             }
+            .frame(width: 16, height: 16)
+            Text("Usage")
+                .font(TypeScale.font(TypeScale.body, .medium))
+                .foregroundStyle(Theme.primary)
         }
-        .frame(width: 16, height: 16)
-        .frame(width: 36, height: 36)
-        .background(Circle().fill(Theme.lift(0.16)))
+        .frame(maxWidth: .infinity)
+        .frame(height: 36)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.lift(0.16)))
+        .padding(.horizontal, 10)
         .clickable("Usage", action: action)
     }
 }
