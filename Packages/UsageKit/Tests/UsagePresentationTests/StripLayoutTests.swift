@@ -45,12 +45,28 @@ struct StripLayoutTests {
         let start: CGFloat = -40
         let limit: CGFloat = 300
         let path: [CGFloat] = [-10, -60, -35]
-        #expect(path.map { StripLayout.dragged(from: start, by: $0, limit: limit) } == [-50, -100, -75])
+        #expect(path.map { StripLayout.dragged(logicalOrigin: start, by: $0, limit: limit) } == [-50, -100, -75])
         // It is where it was dropped, not where the pointer went past the edge.
-        #expect(StripLayout.dragged(from: start, by: -900, limit: limit) == -300)
-        #expect(StripLayout.dragged(from: start, by: 900, limit: limit) == 300)
+        #expect(StripLayout.dragged(logicalOrigin: start, by: -900, limit: limit) == -300)
+        #expect(StripLayout.dragged(logicalOrigin: start, by: 900, limit: limit) == 300)
         // A press that has not moved leaves it exactly where it was.
-        #expect(StripLayout.dragged(from: start, by: 0, limit: limit) == start)
+        #expect(StripLayout.dragged(logicalOrigin: start, by: 0, limit: limit) == start)
+    }
+
+    @Test func aDragAwayFromCentreStartsAtItsLogicalRestingOffset() {
+        let logicalStart: CGFloat = -100
+        let visualStart = StripLayout.place(
+            contentHeight: full, restHeight: rest, available: available, offset: logicalStart
+        ).offset
+        let movedLogical = StripLayout.dragged(logicalOrigin: logicalStart, by: -5, limit: 300)
+        let movedVisual = StripLayout.place(
+            contentHeight: full, restHeight: rest, available: available, offset: movedLogical
+        ).offset
+
+        // Moving the pointer upward must move the strip upward from where it was drawn,
+        // without first jumping towards the middle.
+        #expect(movedVisual < visualStart)
+        #expect(visualStart - movedVisual <= 5)
     }
 
     @Test func theThresholdIsSmallEnoughToFeelImmediateAndBigEnoughToSurviveAClick() {
@@ -79,6 +95,19 @@ struct StripLayoutTests {
         #expect(placed.scrolls == false)
     }
 
+    @Test func draggingThroughTheMiddleIsContinuousAndMonotonic() {
+        let pointerOffsets = stride(from: CGFloat(-200), through: 200, by: 1)
+        let placedOffsets = pointerOffsets.map {
+            StripLayout.place(contentHeight: full, restHeight: rest, available: available, offset: $0).offset
+        }
+
+        for (previous, next) in zip(placedOffsets, placedOffsets.dropFirst()) {
+            // A one-point pointer movement cannot send the strip backwards or make it jump.
+            #expect(next >= previous)
+            #expect(next - previous <= 1.001)
+        }
+    }
+
     @Test func theForcedDragStateMovesBeforeTheRestingHeightHasBeenMeasured() {
         let centered = StripLayout.place(contentHeight: 240, restHeight: 0, available: available, offset: 0)
         let dragged = StripLayout.place(
@@ -86,21 +115,19 @@ struct StripLayoutTests {
             offset: StripLayout.forcedDragOffset
         )
         #expect(centered.offset == 0)
-        #expect(dragged.offset == -120)
+        #expect(abs(dragged.offset + 176) < 0.001)
     }
 
     @Test func nearTheTopItGrowsDownwards() {
-        // Dragged 200pt up: its top edge is 100pt from the top of the screen.
+        // Two-thirds of the way to the top, two-thirds of the added height grows downwards.
         let placed = StripLayout.place(contentHeight: full, restHeight: rest, available: available, offset: -200)
-        // The top edge stays at 100; the middle is then 100 + 250 = 350, which is 100 above the
-        // screen's middle. Nothing is cut off the top.
-        #expect(placed.offset == -100)
+        #expect(abs(placed.offset + 400 / 3) < 0.001)
         #expect(placed.offset - placed.height / 2 + available / 2 >= 0)
     }
 
     @Test func nearTheBottomItGrowsUpwards() {
         let placed = StripLayout.place(contentHeight: full, restHeight: rest, available: available, offset: 200)
-        #expect(placed.offset == 100)
+        #expect(abs(placed.offset - 400 / 3) < 0.001)
         #expect(placed.offset + placed.height / 2 + available / 2 <= available)
     }
 

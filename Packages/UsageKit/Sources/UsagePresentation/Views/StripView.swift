@@ -21,6 +21,10 @@ struct StripView: View {
     let availableHeight: CGFloat
     /// How far the strip sits from the middle of the edge, and whether it is being dragged.
     let offset: CGFloat
+    /// Its stored resting position. Placement may shift the expanded strip away from this,
+    /// but pointer movement must continue from the stored value rather than feeding that
+    /// visual shift back into the model.
+    let dragOrigin: CGFloat
     let isDragging: Bool
     /// How tall the strip is at rest, so a drag stops where it would leave the screen.
     let restHeight: CGFloat
@@ -51,7 +55,14 @@ struct StripView: View {
         .contentShape(.rect)
         .offset(y: offset)
         .onHover(perform: onPointer)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.isExpanded)
+        // Hover and drop transitions ease into place. Pointer frames stay unanimated while
+        // dragging, so the strip remains directly under the pointer instead of lagging behind it.
+        .animation(transitionAnimation, value: model.isExpanded)
+        .animation(transitionAnimation, value: offset)
+    }
+
+    private var transitionAnimation: Animation? {
+        reduceMotion || isDragging ? nil : .easeOut(duration: 0.18)
     }
 
     /// The bar at the top of the strip, and the only place a move gesture begins.
@@ -75,11 +86,16 @@ struct StripView: View {
         DragGesture(minimumDistance: StripLayout.dragThreshold, coordinateSpace: .local)
             .onChanged { value in
                 if start == nil {
-                    start = offset
+                    start = dragOrigin
                     onDragBegin()
                 }
                 guard let start else { return }
-                onDrag(StripLayout.dragged(from: start, by: value.translation.height, limit: dragLimit), dragLimit)
+                onDrag(
+                    StripLayout.dragged(
+                        logicalOrigin: start, by: value.translation.height, limit: dragLimit
+                    ),
+                    dragLimit
+                )
             }
             .onEnded { _ in
                 guard start != nil else { return }

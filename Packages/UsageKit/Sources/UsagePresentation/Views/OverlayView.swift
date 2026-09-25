@@ -65,6 +65,7 @@ public struct OverlayView: View {
                         model: model,
                         availableHeight: availableHeight,
                         offset: strip.offset,
+                        dragOrigin: viewModel.stripOffset,
                         isDragging: viewModel.isDraggingStrip,
                         restHeight: restStripHeight,
                         onPointer: { inside in

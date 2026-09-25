@@ -257,7 +257,7 @@ public final class OverlayViewModel {
     ///   - limit: how far it may go before it would leave the screen.
     public func dragStrip(to offset: CGFloat, limit: CGFloat) {
         guard isDraggingStrip else { return }
-        stripOffset = StripLayout.dragged(from: offset, by: 0, limit: limit)
+        stripOffset = StripLayout.dragged(logicalOrigin: offset, by: 0, limit: limit)
     }
 
     public func endStripDrag() {
