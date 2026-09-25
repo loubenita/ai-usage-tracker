@@ -20,17 +20,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewModel: OverlayViewModel
         switch launch.data {
         case .real:
-            // The open sessions every 2 seconds, their files at most every 6 (see
-            // ProcessSessionRepository.defaultFilesInterval), and the totals every 10 minutes.
+            // The open sessions and their files every 6 seconds, and the totals every 10 minutes.
             // The history is saved between launches, so the totals are whole straight away.
             viewModel = OverlayViewModel(
                 repository: ProcessSessionRepository(historyCachePath: ProcessSessionRepository.historyCachePath()),
                 timeSource: SystemTimeSource(),
                 calendar: calendar,
-                reloadInterval: 2,
+                reloadInterval: OverlayViewModel.defaultReloadInterval,
                 totalsInterval: 600,
                 opener: TerminalOpener(),
-                stripOffset: CGFloat(UserDefaults.standard.double(forKey: Self.stripOffsetKey)),
+                stripOffset: launch.target == .drag
+                    ? StripLayout.forcedDragOffset
+                    : CGFloat(UserDefaults.standard.double(forKey: Self.stripOffsetKey)),
                 saveStripOffset: { UserDefaults.standard.set(Double($0), forKey: Self.stripOffsetKey) }
             )
         case .fake:
@@ -38,7 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewModel = OverlayViewModel(
                 repository: repository,
                 timeSource: FakeTimeSource(start: repository.anchor),
-                calendar: calendar
+                calendar: calendar,
+                stripOffset: launch.target == .drag ? StripLayout.forcedDragOffset : 0
             )
         }
         let controller = OverlayController(viewModel: viewModel, launchState: launch)
@@ -48,9 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 /// A state to force at launch, so screenshots need no mouse or keyboard input:
-/// `--state rest|hover|drag|open-session|open-today|open-week|open-month`. `drag` shows the
-/// strip picked up, as Paper frame 7 does. Hover grows the strip as
+/// `--state rest|hover|drag|open-session|open-session-details|open-today|open-week|open-month`.
+/// `drag` shows the
+/// full strip picked up, as Paper frame 7 does. Hover grows the strip as
 /// the pointer does. `open-session` opens the Image generation session, as the Paper frames do;
+/// `open-session-details` also reveals its details disclosure;
 /// `--session <id>` picks another. `open-today`, `open-week` and `open-month` open the usage
 /// panel on that period, with no session selected (`open-overview` is `open-today`), showing
 /// every agent, or with `--agent claude-code|codex|cursor|…` that agent only.
@@ -82,6 +86,7 @@ struct LaunchState {
 
     let target: Target?
     let data: DataSource
+    let showsSessionDetails: Bool
 
     init(arguments: [String]) {
         func value(after flag: String) -> String? {
@@ -94,12 +99,13 @@ struct LaunchState {
         target = switch state {
         case "hover": .hover
         case "drag": .drag
-        case "open-session": .open(session)
+        case "open-session", "open-session-details": .open(session)
         case "open-today", "open-overview": .usage(.today, filter)
         case "open-week": .usage(.week, filter)
         case "open-month": .usage(.month, filter)
         default: nil
         }
+        showsSessionDetails = state == "open-session-details"
         data = value(after: "--data").flatMap(DataSource.init(rawValue:)) ?? (state == nil ? .real : .fake)
         sessionCount = value(after: "--sessions").flatMap(Int.init)
         openSessionID = value(after: "--open")

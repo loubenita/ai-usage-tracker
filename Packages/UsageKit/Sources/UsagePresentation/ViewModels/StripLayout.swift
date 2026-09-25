@@ -3,9 +3,9 @@ import CoreGraphics
 /// How many sessions the strip shows: at rest the few most recently busy, and never more
 /// than the screen has room for.
 public enum StripLayout {
-    /// The expanded strip leaves room for the agent, project and task instead of showing
-    /// anonymous rings. Session and usage panels use the same wider reading column.
-    public static let expandedWidth: CGFloat = 224
+    /// The expanded strip is a compact provider mark, task and context ring. Session and usage
+    /// panels keep the wider reading column beside it.
+    public static let expandedWidth: CGFloat = 168
     public static let panelWidth: CGFloat = 360
     /// Expanded strip + gap + panel + room for the soft glass shadow.
     public static let overlayWidth: CGFloat = expandedWidth + 8 + panelWidth + 32
@@ -14,9 +14,10 @@ public enum StripLayout {
     /// the rest in a "+N" item.
     public static let restLimit = 5
 
-    /// Half strip, from Paper frame 1: 12pt padding at the top and bottom, and a 51pt item
-    /// (36pt half ring, 3pt gap, 12pt time) every 63pt.
+    /// Half strip: 12pt padding at the top and bottom, a visible drag handle and its gap, then
+    /// a 51pt item (36pt half ring, 3pt gap, 12pt time) every 63pt.
     static let restPadding: CGFloat = 12 * 2
+    static let restHandle: CGFloat = handleBand + 12
     static let restItemPitch: CGFloat = 51 + 12
     static let restItemHeight: CGFloat = 51
     /// The "+N" band across the foot of the strip, and the gap above it.
@@ -28,7 +29,7 @@ public enum StripLayout {
     /// "+N" chip is a small chip rather than an item, so it takes no session's place; it does
     /// take its own room, so `showingChip` leaves it.
     public static func restCapacity(height: CGFloat, showingChip: Bool = false) -> Int {
-        let forItems = height - restPadding - (showingChip ? restChip : 0)
+        let forItems = height - restPadding - restHandle - (showingChip ? restChip : 0)
         guard forItems >= restItemHeight else { return 1 }
         return min(Int((forItems - restItemHeight) / restItemPitch) + 1, restLimit)
     }
@@ -44,14 +45,14 @@ public enum StripLayout {
     /// The pointer moves this far with the button down before the strip is picked up. Until
     /// then nothing changes, so a click on the handle leaves the strip as it was.
     public static let dragThreshold: CGFloat = 4
-    /// The handle's band at the top of the strip: a press that starts here drags it at once.
-    public static let handleBand: CGFloat = 14
-
-    /// Whether a press may drag the strip: it started on the handle, or the strip has been
-    /// held long enough to be picked up from anywhere.
-    public static func canDrag(fromY y: CGFloat, isHeld: Bool) -> Bool {
-        isHeld || (y >= 0 && y <= handleBand)
-    }
+    /// The visible handle's band at the top of the strip.
+    public static let handleBand: CGFloat = 28
+    /// A full-width hit target at the screen edge with the visible capsule inset on both sides.
+    public static let handleHitWidth: CGFloat = 30
+    public static let handleMarkWidth: CGFloat = 22
+    /// The screenshot-only drag state starts before SwiftUI has measured the resting strip.
+    /// This keeps a representative 240pt expanded strip visibly above centre even then.
+    public static let forcedDragOffset: CGFloat = -240
 
     /// Where the strip ends up: where it was when the drag began, plus how far the pointer has
     /// moved, kept inside `limit` so the strip cannot be dragged off the screen.

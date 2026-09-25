@@ -4,12 +4,17 @@ import Testing
 
 @Suite("How many sessions fit on the strip")
 struct StripLayoutTests {
+    @Test func theExpandedListStaysCompact() {
+        #expect(StripLayout.expandedWidth == 168)
+    }
+
     @Test func countsWholeItemsAfterThePaddingAndStopsAtFive() {
-        // 24pt of padding, one 51pt item and one more every 63pt, but never more than five.
+        // 24pt of padding, the handle, one 51pt item and one more every 63pt, capped at five.
+        let firstItem = StripLayout.restPadding + StripLayout.restHandle + StripLayout.restItemHeight
         #expect(StripLayout.restCapacity(height: 907) == 5)
-        #expect(StripLayout.restCapacity(height: 24 + 51) == 1)
-        #expect(StripLayout.restCapacity(height: 24 + 51 + 63) == 2)
-        #expect(StripLayout.restCapacity(height: 24 + 51 + 62) == 1)
+        #expect(StripLayout.restCapacity(height: firstItem) == 1)
+        #expect(StripLayout.restCapacity(height: firstItem + StripLayout.restItemPitch) == 2)
+        #expect(StripLayout.restCapacity(height: firstItem + StripLayout.restItemPitch - 1) == 1)
     }
 
     @Test func aTinyScreenStillShowsOne() {
@@ -26,23 +31,14 @@ struct StripLayoutTests {
         #expect(StripLayout.visible(count: 9, capacity: 5) == (5, 4))
         // The band needs its own room at the foot, so a screen that fits five rings without
         // it fits four with it.
-        let fiveRings = CGFloat(24 + 51 + 4 * 63)
+        let fiveRings = StripLayout.restPadding + StripLayout.restHandle
+            + StripLayout.restItemHeight + 4 * StripLayout.restItemPitch
         #expect(StripLayout.restCapacity(height: fiveRings) == 5)
         #expect(StripLayout.restCapacity(height: fiveRings, showingChip: true) == 4)
         #expect(StripLayout.restCapacity(height: fiveRings + StripLayout.restChip, showingChip: true) == 5)
     }
 
     // MARK: - Dragging
-
-    @Test func onlyTheHandleStartsADragUntilTheStripHasBeenHeld() {
-        // The handle is the top 14pt of the strip.
-        #expect(StripLayout.canDrag(fromY: 0, isHeld: false))
-        #expect(StripLayout.canDrag(fromY: 14, isHeld: false))
-        #expect(!StripLayout.canDrag(fromY: 15, isHeld: false))
-        #expect(!StripLayout.canDrag(fromY: 200, isHeld: false))
-        // Held for five seconds, anywhere on the strip drags it.
-        #expect(StripLayout.canDrag(fromY: 200, isHeld: true))
-    }
 
     @Test func theStripFollowsThePointerFromWhereItWas() {
         // A press at -40 that moves up 10, up 60 and back down 25.
@@ -61,6 +57,13 @@ struct StripLayoutTests {
         #expect(StripLayout.dragThreshold == 4)
     }
 
+    @Test func theDragHandleStaysFullyVisibleAtTheScreenEdge() {
+        #expect(StripLayout.handleHitWidth == 30)
+        #expect(StripLayout.handleMarkWidth == 22)
+        #expect((StripLayout.handleHitWidth - StripLayout.handleMarkWidth) / 2 == 4)
+        #expect(StripLayout.handleHitWidth / 2 == 15)
+    }
+
     // MARK: - Staying on the screen
 
     /// A screen 900pt tall, a resting strip of 300pt, growing to 500pt.
@@ -74,6 +77,16 @@ struct StripLayoutTests {
         // Its middle does not move, so it grows 100pt up and 100pt down.
         #expect(placed.offset == 0)
         #expect(placed.scrolls == false)
+    }
+
+    @Test func theForcedDragStateMovesBeforeTheRestingHeightHasBeenMeasured() {
+        let centered = StripLayout.place(contentHeight: 240, restHeight: 0, available: available, offset: 0)
+        let dragged = StripLayout.place(
+            contentHeight: 240, restHeight: 0, available: available,
+            offset: StripLayout.forcedDragOffset
+        )
+        #expect(centered.offset == 0)
+        #expect(dragged.offset == -120)
     }
 
     @Test func nearTheTopItGrowsDownwards() {

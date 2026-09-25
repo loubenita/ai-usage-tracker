@@ -20,7 +20,7 @@ Sub-agents are **not** sessions. A sub-agent is an agent that another agent star
 - **Terminal:** the TTY and the terminal app that owns it (Warp, Terminal, iTerm, Ghostty, tmux), shown in the session panel.
 - **Claude Code extra:** each running Claude Code session writes a small file under `~/.claude/sessions/`. Read it to get the session id, then find the matching transcript in `~/.claude/projects/<folder-name>/<session-id>.jsonl`. Context, tokens and status come in a later step, so for now only link the session to its transcript.
 
-Refresh every 2 seconds. A session that ends disappears from the strip. A new one appears without restarting the app.
+Refresh every 6 seconds. A session that ends disappears from the strip. A new one appears without restarting the app.
 
 ## Rules
 - **Never move the mouse or type into anything.** No System Events, AppleScript clicks, CGEvent or cliclick. The owner uses this Mac while you work, and the last session moved their pointer. Test states with the `--state` launch argument and `scripts/capture-states.sh`, which launches the app into a state and screenshots only its window.
@@ -38,7 +38,7 @@ Refresh every 2 seconds. A session that ends disappears from the strip. A new on
 
 ## Done when
 - With the real repository selected, the strip lists exactly the agent sessions running in terminals right now, with no sub-agents and no background jobs. Check the list against `ps` output captured at the same moment, and save both.
-- Starting a new `claude` in a terminal adds a ring within 2 seconds, and quitting it removes the ring.
+- Starting a new `claude` in a terminal adds a ring within 6 seconds, and quitting it removes the ring.
 - The strip matches Paper frames 1 and 2.
 - The tests pass.
 - Proof is saved in `~/.claude/proof/ai-usage-tracker/build-2/`: window screenshots of the rest and hover states with real sessions, the matching `ps` capture, and the test summary.

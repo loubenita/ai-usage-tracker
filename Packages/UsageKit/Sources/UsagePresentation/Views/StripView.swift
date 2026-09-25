@@ -3,19 +3,18 @@ import SwiftUI
 /// The glass strip on the right edge. It touches the screen edge, so only its left corners
 /// are rounded. At rest it is the half strip of Paper frame 1: 30pt wide, each session's ring
 /// cut in half by the screen edge. With the pointer over it, or a panel open, it grows into
-/// the full strip of frame 2: whole context rings plus each session's agent, project and task,
-/// and the usage button.
+/// the full strip of frame 2: a compact provider mark, task and context ring for each session,
+/// plus the usage button.
 ///
 /// When there are more sessions than the screen has room for, the half strip shows as many
 /// as fit and a "+N" item for the rest, and the full strip scrolls.
 ///
-/// It is dragged by the handle at its top, or from anywhere after a five-second hold. Either
-/// way nothing happens until the pointer has moved `StripLayout.dragThreshold`; then the strip
-/// shrinks back to the half strip (Paper frame 7), follows the pointer up and down the edge,
-/// and grows back where it is dropped.
+/// It is dragged by the visible handle at its top. Nothing happens until the pointer has moved
+/// `StripLayout.dragThreshold`; then the full strip follows the pointer up and down the edge.
+/// Keeping its size prevents the handle from moving out from under the pointer mid-drag.
 ///
-/// The gesture lives here, on the view that stays put, rather than on the handle: shrinking
-/// swaps the handle's view for another, which would end the drag as soon as it began.
+/// The handle stays the same distance from the screen edge at both widths, so expansion does
+/// not move it away before the press. Its gesture does not compete with row scrolling.
 struct StripView: View {
     let model: StripModel
     /// The height the screen gives the strip.
@@ -35,12 +34,6 @@ struct StripView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Where the strip sat when the drag began; nil while nothing is being dragged.
     @State private var start: CGFloat?
-    /// True once the strip has been held long enough to be dragged from anywhere.
-    @State private var isHeld = false
-
-    /// How long the strip is held before it can be dragged.
-    static let holdToDrag: Double = 5
-
     var body: some View {
         Group {
             if model.isExpanded {
@@ -51,46 +44,37 @@ struct StripView: View {
                     capacity: StripLayout.restCapacity(
                         height: availableHeight, showingChip: model.items.count > StripLayout.restLimit
                     ),
-                    handle: isDragging ? handle : nil
+                    handle: handle
                 )
             }
         }
-        .frame(maxHeight: availableHeight)
         .contentShape(.rect)
         .offset(y: offset)
         .onHover(perform: onPointer)
-        .gesture(drag)
-        .simultaneousGesture(hold)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.isExpanded)
     }
 
-    /// The bar at the top of the strip. The gesture is on the strip itself; this is what it
-    /// looks like, and what a press must start on before the strip has been held.
+    /// The bar at the top of the strip, and the only place a move gesture begins.
     private var handle: some View {
         Capsule()
             .fill(Theme.lift(0.40))
-            .frame(width: 22, height: 4)
-            .frame(height: StripLayout.handleBand)
+            .frame(width: StripLayout.handleMarkWidth, height: 5)
+            .frame(width: StripLayout.handleHitWidth, height: StripLayout.handleBand)
+            .contentShape(.rect)
+            .gesture(drag)
+            .help("Drag the session list up or down")
             .accessibilityLabel("Drag the strip up or down")
     }
 
     /// How far the strip may be dragged before its resting self would leave the screen.
     private var dragLimit: CGFloat { max((availableHeight - restHeight) / 2, 0) }
 
-    /// Holding anywhere on the strip for five seconds lets it be dragged from there. It does
-    /// not move or shrink until the pointer does.
-    private var hold: some Gesture {
-        LongPressGesture(minimumDuration: Self.holdToDrag, maximumDistance: StripLayout.dragThreshold)
-            .onEnded { _ in isHeld = true }
-    }
-
-    /// The drag itself: it begins once the pointer has moved past the threshold, from the
-    /// handle or from anywhere the strip has been held.
+    /// The drag begins once the pointer has moved past the threshold on the handle. Keeping it
+    /// off the session list leaves vertical scrolling and row selection untouched.
     private var drag: some Gesture {
         DragGesture(minimumDistance: StripLayout.dragThreshold, coordinateSpace: .local)
             .onChanged { value in
                 if start == nil {
-                    guard StripLayout.canDrag(fromY: value.startLocation.y, isHeld: isHeld) else { return }
                     start = offset
                     onDragBegin()
                 }
@@ -98,7 +82,6 @@ struct StripView: View {
                 onDrag(StripLayout.dragged(from: start, by: value.translation.height, limit: dragLimit), dragLimit)
             }
             .onEnded { _ in
-                isHeld = false
                 guard start != nil else { return }
                 start = nil
                 onDragEnd()
@@ -111,7 +94,7 @@ struct StripView: View {
 private struct HalfStrip<Handle: View>: View {
     let model: StripModel
     let capacity: Int
-    /// Shown only while the strip is being dragged; at rest the strip is just its sessions.
+    /// Always visible so the strip's movable affordance is discoverable.
     let handle: Handle?
 
     var body: some View {
@@ -120,7 +103,7 @@ private struct HalfStrip<Handle: View>: View {
         let visible = StripLayout.visible(count: recent.count, capacity: capacity)
         VStack(alignment: .trailing, spacing: 0) {
             VStack(alignment: .trailing, spacing: 12) {
-            if let handle { handle.frame(width: 29) }
+            if let handle { handle.frame(width: 29, alignment: .trailing) }
             ForEach(recent.prefix(visible.shown)) { item in
                 VStack(alignment: .trailing, spacing: 3) {
                     HalfRing(model: item.ring)
@@ -210,7 +193,8 @@ private struct FullStrip<Handle: View>: View {
     var body: some View {
         // The expanded strip is a readable session list rather than a column of anonymous rings.
         VStack(spacing: 0) {
-            handle.frame(width: StripLayout.expandedWidth)
+            // Aligned like the resting handle, so hover expansion leaves it under the pointer.
+            handle.frame(width: StripLayout.expandedWidth, alignment: .trailing)
             // All the items when they fit; otherwise the same items in a list that scrolls.
             ViewThatFits(in: .vertical) {
                 items
@@ -246,58 +230,37 @@ private struct StripItemView: View {
     let item: StripItemModel
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(spacing: 5) {
-                SessionRing(model: item.ring)
-                    .overlay(alignment: .topTrailing) {
-                        if item.needsUser {
-                            NeedsYouDot(pulses: item.pulses)
-                                .offset(x: -1, y: 1)
-                        }
-                    }
-                Text(item.time)
-                    .font(TypeScale.font(TypeScale.caption, .medium))
-                    .foregroundStyle(Theme.timer)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .staticDigits()
-            }
-            .frame(width: 42)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    AgentDot(agent: item.ring.agent)
-                    Text(item.agentName)
-                        .font(TypeScale.font(TypeScale.caption, .semibold))
-                        .foregroundStyle(Theme.name)
-                }
-                Text(item.project)
-                    .font(TypeScale.captionFont)
-                    .foregroundStyle(Theme.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        HStack(spacing: 7) {
+            AgentMark(agent: item.ring.agent)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(TypeScale.font(TypeScale.body, .semibold))
                     .foregroundStyle(Theme.primary)
                     .lineLimit(1)
-                if let firstAsk = item.firstAsk {
-                    Text(firstAsk)
-                        .font(TypeScale.captionFont)
-                        .foregroundStyle(Theme.secondary)
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                    .truncationMode(.tail)
+                Text(item.time)
+                    .font(TypeScale.font(TypeScale.caption, .medium))
+                    .foregroundStyle(Theme.timer)
+                    .lineLimit(1)
+                    .staticDigits()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            SessionRing(model: item.ring)
+                .overlay(alignment: .topTrailing) {
+                    if item.needsUser {
+                        NeedsYouDot(pulses: item.pulses)
+                            .offset(x: -1, y: 1)
+                    }
+                }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(width: StripLayout.expandedWidth - 8, alignment: .leading)
         // The item under the pointer or open is lifted, more when open.
         .background(RoundedRectangle(cornerRadius: 14).fill(highlightFill))
         .frame(width: StripLayout.expandedWidth)
         .contentShape(.rect)
+        .help(item.title)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.accessibilityLabel)
         .accessibilityAddTraits(.isButton)

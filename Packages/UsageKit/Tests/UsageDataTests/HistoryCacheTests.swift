@@ -134,4 +134,23 @@ struct HistoryCacheTests {
         #expect(snapshot.turns.map(\.id).sorted() == read.turns.map(\.id).sorted())
         #expect(snapshot.limits.count == read.limits.count)
     }
+
+    @Test func readingTheLatestSnapshotDoesNotScanHistoryOrWriteTheCache() throws {
+        let home = try UsageHistoryTests.home()
+        let cachePath = home + "/cache/history-cache.json"
+        let history = UsageHistory(
+            homeDirectory: home, claudeDirectory: home + "/.claude",
+            codex: CodexFiles(directory: home + "/.codex"), kiro: KiroFiles(directory: home + "/.kiro/sessions/cli"),
+            minimumWorkingTime: 0, cachePath: cachePath
+        )
+        #expect(history.latest().isComplete == false)
+        #expect(!FileManager.default.fileExists(atPath: cachePath))
+        _ = history.read(now: UsageHistoryTests.now)
+        #expect(FileManager.default.fileExists(atPath: cachePath))
+        let marker = Date(timeIntervalSince1970: 1_000)
+        try FileManager.default.setAttributes([.modificationDate: marker], ofItemAtPath: cachePath)
+        _ = history.latest()
+        let attributes = try FileManager.default.attributesOfItem(atPath: cachePath)
+        #expect(attributes[.modificationDate] as? Date == marker)
+    }
 }

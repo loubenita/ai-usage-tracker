@@ -6,13 +6,15 @@ import UsageDomain
 ///
 /// Each part is refreshed as often as it changes, so the main thread stays free:
 /// - every second, only the timers move (the open sessions are re-summed from their own turns);
-/// - every `reloadInterval` seconds, the open sessions are read, without the month of history;
+/// - every `reloadInterval` seconds, the open sessions are read, without waking the month history;
 /// - every `totalsInterval` seconds (10 minutes), or when the usage panel's refresh button is pressed,
 ///   Today, Week, Month and the limits are rebuilt from every record, off the main thread. Until
 ///   the history has finished its first read, that happens every `pendingTotalsInterval` seconds.
 @MainActor
 @Observable
 public final class OverlayViewModel {
+    /// Process discovery is fresh enough to feel live without launching `ps` every two seconds.
+    public static let defaultReloadInterval = 6
     public private(set) var report: UsageReport?
     public private(set) var hoveredSessionID: String?
     public private(set) var openSessionID: String?
@@ -62,7 +64,7 @@ public final class OverlayViewModel {
         repository: any UsageRepository,
         timeSource: any TimeSource,
         calendar: Calendar,
-        reloadInterval: Int = 2,
+        reloadInterval: Int = OverlayViewModel.defaultReloadInterval,
         totalsInterval: Int = 600,
         opener: (any SessionOpening)? = nil,
         stripOffset: CGFloat = 0,
@@ -121,7 +123,7 @@ public final class OverlayViewModel {
         await loadTotals()
     }
 
-    /// Reads the open sessions only: cheap enough to do every couple of seconds.
+    /// Reads the open sessions only: cheap enough to do every six seconds.
     func loadSessions() async {
         do {
             let generate = try await makeGenerate()
@@ -244,8 +246,8 @@ public final class OverlayViewModel {
         opener?.open(origin)
     }
 
-    /// Pressing and holding the strip picks it up; it then follows the pointer up and down the
-    /// screen's edge, and stays where it is dropped.
+    /// Dragging the visible handle picks the strip up; it then follows the pointer up and down
+    /// the screen's edge, and stays where it is dropped.
     public func beginStripDrag() {
         isDraggingStrip = true
     }

@@ -8,6 +8,11 @@ public enum TerminalFocusStep: Sendable, Hashable {
     case run(program: String, arguments: [String])
 }
 
+public enum TerminalFocusAction: Sendable, Hashable {
+    case session
+    case application(TerminalApp)
+}
+
 /// A tmux pane as `tmux list-panes -a` reports it.
 public struct TmuxPane: Sendable, Hashable {
     public let tty: String
@@ -56,14 +61,22 @@ public enum TerminalFocus {
         }
     }
 
-    /// Whether Open can do anything for the session: the panel hides the button otherwise.
-    public static func canOpen(_ origin: SessionOrigin) -> Bool {
+    /// What the button can promise. Terminal and tmux can target a session. Other supported
+    /// terminals expose app activation only, so the UI must not call that "Open session".
+    public static func action(for origin: SessionOrigin) -> TerminalFocusAction? {
         switch origin.terminal {
-        case .tmux: origin.tmux != nil || origin.hostTerminal.flatMap(bundleID(of:)) != nil
-        case .unknown: false
-        default: bundleID(of: origin.terminal) != nil
+        case .tmux:
+            if origin.tmux != nil { return .session }
+            return origin.hostTerminal.flatMap { bundleID(of: $0) == nil ? nil : .application($0) }
+        case .terminal:
+            return safeTTY(origin.tty) == nil ? .application(.terminal) : .session
+        case .warp, .iterm, .ghostty:
+            return bundleID(of: origin.terminal) == nil ? nil : .application(origin.terminal)
+        case .unknown: return nil
         }
     }
+
+    public static func canOpen(_ origin: SessionOrigin) -> Bool { action(for: origin) != nil }
 
     /// The steps for a session. For tmux, `panes` and `clients` are what tmux reported when Open
     /// was clicked: a pane found by the session's TTY stands in when its location is not known,
