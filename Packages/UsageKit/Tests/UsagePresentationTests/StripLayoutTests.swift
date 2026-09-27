@@ -68,6 +68,18 @@ struct StripLayoutTests {
         #expect(visualStart - movedVisual <= 5)
     }
 
+    @Test func aDragStartsAtTheRailsDrawnPosition() {
+        let logicalStart: CGFloat = -180
+        let drawn = StripLayout.place(
+            contentHeight: full, restHeight: rest, available: available, offset: logicalStart
+        )
+
+        // When an expanded rail collapses at drag start, its stored offset must begin at the
+        // drawn centre. Otherwise the rail jumps before it can follow the pointer.
+        #expect(StripLayout.dragOrigin(for: drawn) == drawn.offset)
+        #expect(StripLayout.dragOrigin(for: drawn) != logicalStart)
+    }
+
     @Test func theThresholdIsSmallEnoughToFeelImmediateAndBigEnoughToSurviveAClick() {
         #expect(StripLayout.dragThreshold == 4)
     }

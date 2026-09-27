@@ -23,7 +23,7 @@ struct StripView: View {
     var body: some View {
         VStack(spacing: 0) {
             handle
-            Group {
+            VStack(spacing: 0) {
                 if model.isExpanded {
                     ExpandedContents(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage)
                 } else {
@@ -36,13 +36,15 @@ struct StripView: View {
                     )
                 }
             }
+            // The handle is deliberately outside this hover target: placing the pointer over
+            // the drag affordance must leave a resting rail compact.
+            .contentShape(.rect)
+            .onHover(perform: onPointer)
         }
         .frame(width: model.isExpanded ? StripLayout.expandedWidth : StripLayout.restingWidth)
         .padding(.vertical, 8)
         .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.stripRadius))
-        .contentShape(.rect)
         .offset(y: offset)
-        .onHover(perform: onPointer)
         .animation(transitionAnimation, value: model.isExpanded)
         .animation(transitionAnimation, value: offset)
     }
@@ -70,7 +72,9 @@ struct StripView: View {
     private var dragLimit: CGFloat { max((availableHeight - restHeight) / 2, 0) }
 
     private var drag: some Gesture {
-        DragGesture(minimumDistance: StripLayout.dragThreshold, coordinateSpace: .local)
+        // Global coordinates stay fixed as the rail moves. Local coordinates move with this
+        // view, feeding its offset back into translation and making a vertical drag bounce.
+        DragGesture(minimumDistance: StripLayout.dragThreshold, coordinateSpace: .global)
             .onChanged { value in
                 if start == nil {
                     start = dragOrigin
@@ -157,38 +161,34 @@ private struct StripItemView: View {
     let item: StripItemModel
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             AgentMark(agent: item.ring.agent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(TypeScale.font(TypeScale.body, .semibold))
                     .foregroundStyle(Theme.primary)
                     .lineLimit(2)
-                Text(item.project)
+                Text(context)
+                    .font(TypeScale.font(TypeScale.caption, .medium))
+                    .foregroundStyle(Theme.timer)
+                    // The project and branch share this two-line budget. A long branch cannot
+                    // grow a row by taking a third line below its project.
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 3) {
+                SessionRing(model: item.ring)
+                    .overlay(alignment: .topTrailing) {
+                        if item.needsUser { NeedsYouDot(pulses: item.pulses).offset(x: -1, y: 1) }
+                    }
+                Text(item.time)
                     .font(TypeScale.font(TypeScale.caption, .medium))
                     .foregroundStyle(Theme.timer)
                     .lineLimit(1)
-                HStack(spacing: 4) {
-                    if let branch = item.branch {
-                        Text(branch)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.78)
-                        Spacer(minLength: 2)
-                    } else {
-                        Spacer(minLength: 0)
-                    }
-                    Text(item.time)
-                        .fixedSize()
-                }
-                .font(TypeScale.font(TypeScale.caption, .medium))
-                .foregroundStyle(Theme.timer)
-                .staticDigits()
+                    .fixedSize()
+                    .staticDigits()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            SessionRing(model: item.ring)
-                .overlay(alignment: .topTrailing) {
-                    if item.needsUser { NeedsYouDot(pulses: item.pulses).offset(x: -1, y: 1) }
-                }
+            .frame(width: 40)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -206,6 +206,10 @@ private struct StripItemView: View {
         case .hovered: Theme.lift(0.16)
         case .selected: Theme.lift(0.28)
         }
+    }
+
+    private var context: String {
+        [item.project, item.branch].compactMap { $0 }.joined(separator: "\n")
     }
 
 }

@@ -43,8 +43,12 @@ public struct OverlayView: View {
     }
 
     private func content(availableHeight: CGFloat) -> some View {
+        // A drag shows the compact rail. Use its known resting height immediately instead of
+        // one render of the expanded measurement, which otherwise changes the placement while
+        // the pointer is already moving.
+        let displayedStripHeight = viewModel.isDraggingStrip ? restStripHeight : stripHeight
         let strip = StripLayout.place(
-            contentHeight: stripHeight, restHeight: restStripHeight, available: availableHeight,
+            contentHeight: displayedStripHeight, restHeight: restStripHeight, available: availableHeight,
             offset: viewModel.stripOffset
         )
         let panel = StripLayout.place(panel: panelHeight, available: availableHeight, beside: strip.offset)
@@ -65,7 +69,7 @@ public struct OverlayView: View {
                         model: model,
                         availableHeight: availableHeight,
                         offset: strip.offset,
-                        dragOrigin: viewModel.stripOffset,
+                        dragOrigin: StripLayout.dragOrigin(for: strip),
                         isDragging: viewModel.isDraggingStrip,
                         restHeight: restStripHeight,
                         onPointer: { inside in

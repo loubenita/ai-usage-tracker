@@ -56,6 +56,13 @@ public enum StripLayout {
         min(max(logicalOrigin + movement, -limit), limit)
     }
 
+    /// A drag begins at the rail's displayed centre. The expanded rail may have shifted from
+    /// its saved resting offset to stay on screen, so restarting at that saved offset would
+    /// make it jump when it becomes compact.
+    public static func dragOrigin(for placement: Placement) -> CGFloat {
+        placement.offset
+    }
+
     /// Where something of `height` sits on the edge, and whether it has to scroll.
     public struct Placement: Sendable, Equatable {
         /// The height it may take: its own, or the whole screen when it is taller.
