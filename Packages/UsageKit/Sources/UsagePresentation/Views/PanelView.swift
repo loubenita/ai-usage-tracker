@@ -15,17 +15,14 @@ struct PanelView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             header
             StatusRow(model: model.status)
             if !model.stats.isEmpty {
                 StatsRow(stats: model.stats)
             }
-            if model.context != nil {
-                VStack(alignment: .leading, spacing: 10) {
-                    if let context = model.context { BarRow(model: context) }
-                }
-                .sectionDivider()
+            if let context = model.context {
+                BarRow(model: context).sectionDivider()
             }
             if hasDetails {
                 detailsToggle.sectionDivider()
@@ -56,24 +53,31 @@ struct PanelView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
                     AgentMark(agent: model.agent)
-                    Text(model.subtitle)
-                        .font(TypeScale.secondaryFont)
+                    Text(model.agent.displayName.uppercased())
+                        .font(TypeScale.font(TypeScale.caption, .semibold))
                         .foregroundStyle(Theme.secondary)
-                        .lineLimit(1)
+                        .tracking(0.5)
                 }
                 Text(model.title)
                     .font(TypeScale.titleFont)
                     .tracking(-0.17)
                     .foregroundStyle(Theme.primary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !model.subtitle.isEmpty {
+                    Text(model.subtitle)
+                        .font(TypeScale.secondaryFont)
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
             if let action = model.openAction {
                 OpenButton(model: action, action: onOpen)
+                    .padding(.top, 1)
             }
         }
     }
@@ -139,7 +143,35 @@ private struct SessionDetailsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            CapsHeader(title: "SESSION DETAILS")
+            if !activityRows.isEmpty {
+                group("ACTIVITY", rows: activityRows)
+            }
+            if !locationRows.isEmpty {
+                group("LOCATION", rows: locationRows)
+            }
+            if !otherRows.isEmpty {
+                group("OTHER DETAILS", rows: otherRows)
+            }
+        }
+    }
+
+    private var activityRows: [DetailRowModel] {
+        rows.filter { ["Model", "Pace", "Work", "First ask"].contains($0.label) }
+    }
+
+    private var locationRows: [DetailRowModel] {
+        rows.filter { ["Started", "Branch", "Account"].contains($0.label) }
+    }
+
+    private var otherRows: [DetailRowModel] {
+        rows.filter { row in
+            !["Model", "Pace", "Work", "First ask", "Started", "Branch", "Account"].contains(row.label)
+        }
+    }
+
+    private func group(_ title: String, rows: [DetailRowModel]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            CapsHeader(title: title)
             ForEach(rows, id: \.label) { row in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.label).font(TypeScale.captionFont).foregroundStyle(Theme.label)

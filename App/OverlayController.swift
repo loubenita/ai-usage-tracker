@@ -23,6 +23,9 @@ final class OverlayController {
         self.viewModel = viewModel
         self.launchState = launchState
         self.panel = OverlayPanel(contentRect: .zero)
+        // The rail's continuous hover needs movement events even though this panel never
+        // becomes key. The old AppKit tracking view enabled this as a side effect.
+        panel.acceptsMouseMovedEvents = true
 
         // The overlay's window never becomes key, so the first click in it would otherwise be
         // spent activating rather than pressing what is under the pointer.

@@ -1,6 +1,29 @@
 import Foundation
 import UsageDomain
 
+/// Ranking facts for the four visible compact indicators. A missing price stays distinct from
+/// a reported zero, and credits never enter a USD comparison.
+struct CompactRank: Sendable {
+    let id: String
+    let costUSD: Decimal?
+    let contextFraction: Double?
+    let lastActivityAt: Date
+
+    static func ordered(_ values: [Self]) -> [Self] {
+        values.sorted { lhs, rhs in
+            if let left = lhs.costUSD, let right = rhs.costUSD, left != right { return left > right }
+            if (lhs.costUSD != nil) != (rhs.costUSD != nil) { return lhs.costUSD != nil }
+            if lhs.costUSD == nil {
+                let left = lhs.contextFraction ?? -1
+                let right = rhs.contextFraction ?? -1
+                if left != right { return left > right }
+            }
+            if lhs.lastActivityAt != rhs.lastActivityAt { return lhs.lastActivityAt > rhs.lastActivityAt }
+            return lhs.id < rhs.id
+        }
+    }
+}
+
 /// Maps a `UsageReport` to the strip and the session panel the views draw. Pure, so every
 /// sentence and number on screen can be unit-tested without a window. The usage panel is
 /// `UsagePanelPresenter`.
@@ -23,23 +46,14 @@ public struct OverlayPresenter: Sendable {
         acknowledged: Set<String>,
         expanded: Bool = true
     ) -> StripModel {
-        // Equal weight to spend and context fullness. Unknown readings rank last for that
-        // measure; recent activity breaks ties so the collapsed list remains predictable.
+        // Known USD estimates come first. Other providers are unpriced, not free: rank
+        // those by live context fullness and then recent activity.
         let sessions = report.sessions
-        let bySpend = sessions.sorted { lhs, rhs in
-            (lhs.summary.costUSD ?? -1) > (rhs.summary.costUSD ?? -1)
-        }
-        let byContext = sessions.sorted { lhs, rhs in
-            (lhs.summary.context?.fraction ?? -1) > (rhs.summary.context?.fraction ?? -1)
-        }
-        let spendRank = Dictionary(uniqueKeysWithValues: bySpend.enumerated().map { ($0.element.id, $0.offset) })
-        let contextRank = Dictionary(uniqueKeysWithValues: byContext.enumerated().map { ($0.element.id, $0.offset) })
-        let priority = sessions.sorted { lhs, rhs in
-            let left = (spendRank[lhs.id] ?? 0) + (contextRank[lhs.id] ?? 0)
-            let right = (spendRank[rhs.id] ?? 0) + (contextRank[rhs.id] ?? 0)
-            if left != right { return left < right }
-            return lhs.summary.lastActivityAt > rhs.summary.lastActivityAt
-        }
+        let priority = CompactRank.ordered(sessions.map {
+            CompactRank(id: $0.id, costUSD: $0.summary.costUSD,
+                        contextFraction: $0.summary.context?.fraction,
+                        lastActivityAt: $0.summary.lastActivityAt)
+        })
         let priorityRank = Dictionary(uniqueKeysWithValues: priority.enumerated().map { ($0.element.id, $0.offset) })
         let items = report.sessions.map { session in
             let summary = session.summary

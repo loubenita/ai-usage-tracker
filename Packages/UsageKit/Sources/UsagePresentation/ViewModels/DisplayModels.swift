@@ -34,7 +34,7 @@ public struct StripItemModel: Sendable, Equatable, Identifiable {
     /// The amber dot pulses until the item has been hovered once.
     public let pulses: Bool
     public let highlight: ItemHighlight
-    /// Rank by combined spend and context use; 0 is highest priority.
+    /// Known USD spend first, then context/activity for unpriced sessions; 0 is first.
     public let priority: Int
     public let accessibilityLabel: String
 }
@@ -155,12 +155,12 @@ public struct PickerItemModel: Sendable, Equatable, Identifiable {
     public let agent: Agent?
 }
 
-/// One row of the All view's limits list: "Claude 5-hour", a bar, "62%", "16:40".
+/// One reported limit, or a stale account's explanatory row without a bar.
 public struct LimitListRowModel: Sendable, Equatable, Identifiable {
     public let id: String
     public let agent: Agent
     public let name: String
-    /// Nil for an agent that shares no limits: the row says "no data".
+    /// Nil when an account is known but has no recent reading.
     public let fraction: Double?
     public let used: String
     public let freesUp: String

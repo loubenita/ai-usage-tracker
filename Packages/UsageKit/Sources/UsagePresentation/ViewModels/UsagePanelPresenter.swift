@@ -4,8 +4,8 @@ import UsageDomain
 /// Maps a `UsageReport` to the usage button's panel (Paper frames 4 to 6): an agent picker,
 /// Today, Week and Month, and either every agent together or one agent on its own. Pure.
 ///
-/// Nothing an agent does not report is shown as 0. A table cell it cannot fill says "n/a", a
-/// limit it does not share says "no data", and anything else it does not report is left out.
+/// Nothing an agent does not report is shown as 0. A table cell it cannot fill says "n/a";
+/// absent limits are left out, while stale account readings are identified without a bar.
 public struct UsagePanelPresenter: Sendable {
     /// Rows of "Where the time went" before the rest are added up in one "N more" row.
     static let allWhereRows = 4
@@ -196,18 +196,19 @@ public struct UsagePanelPresenter: Sendable {
                     id: "\(agent.rawValue)-\(accountID ?? "default")-\(window)",
                     agent: agent, name: "\(label) \(window)", fraction: percent / 100,
                     used: format.percentPoints(percent),
-                    freesUp: "Reset time unavailable",
+                    freesUp: "Reset time unavailable · read \(format.moment(snapshot.readAt, now: now))",
                     isNearlyUsed: percent >= LimitStanding.warningPercent
                 )
             }
         }
         // This agent only shares a window outside the selected period. Do not turn that into a
-        // misleading "no data" row on Today.
+        // misleading empty row on Today.
         guard allStandings.isEmpty || !standings.isEmpty else { return [] }
         guard !standings.isEmpty else {
+            guard account != nil else { return [] }
             return [LimitListRowModel(
                 id: "\(agent.rawValue)-\(accountID ?? "none")-none", agent: agent, name: label, fraction: nil, used: "",
-                freesUp: snapshot == nil && account != nil ? "no current data" : "no data", isNearlyUsed: false
+                freesUp: "No recent limit reading", isNearlyUsed: false
             )]
         }
         return standings.map { standing in
@@ -217,7 +218,7 @@ public struct UsagePanelPresenter: Sendable {
                 name: "\(label) \(Self.shortWindow(standing.kind))",
                 fraction: standing.usedPercent / 100,
                 used: format.percentPoints(standing.usedPercent),
-                freesUp: standing.resetsAt.map { format.shortMoment($0, now: now) } ?? "",
+                freesUp: standing.resetsAt.map { "Resets \(format.moment($0, now: now))" } ?? "Reset time unavailable",
                 isNearlyUsed: standing.isNearlyUsed
             )
         }
@@ -247,16 +248,21 @@ public struct UsagePanelPresenter: Sendable {
         let open = report.sessions.map(\.summary).filter { $0.agent == agent }
         let limits = report.limits(for: agent)
         let accounts = report.accounts.filter { $0.agent == agent }
+        let accountsWithoutCurrentLimits = accounts.filter {
+            $0.limits.standings.isEmpty && currentSnapshot($0.snapshot, now: report.now) == nil
+        }.map(\.name)
         let hasTokens = fullUsed?.tokens != nil
         let models = (usage?.byModel ?? []).prefix(Self.modelRows).map {
             ModelShareRowModel(name: $0.model.displayName, percent: format.percent($0.share))
         }
         return AgentUsageModel(
             agent: agent,
-            note: note(
-                agent, used: fullUsed, limits: limits,
-                hasAccountUsage: accounts.contains { $0.snapshot != nil }
-            ),
+            note: accountsWithoutCurrentLimits.isEmpty
+                ? note(agent, used: fullUsed, limits: limits, hasAccountUsage: accounts.contains { $0.snapshot != nil })
+                : NoteModel(
+                    title: "Limit reading unavailable",
+                    text: "No recent limit reading for \(accountsWithoutCurrentLimits.joined(separator: ", ")). Cached percentages older than 15 minutes are hidden."
+                ),
             limits: accounts.isEmpty
                 ? limitBars(limits, period: period, agent: agent, now: report.now)
                 : accounts.flatMap {
@@ -314,7 +320,7 @@ public struct UsagePanelPresenter: Sendable {
                 guard let percent else { return nil }
                 return BarRowModel(
                     title: "\(account ?? agent.displayName) · \(title) \(format.percentPoints(percent))",
-                    detail: "Reset time unavailable",
+                    detail: "Reset time unavailable · read \(format.moment(snapshot.readAt, now: now))",
                     fraction: percent / 100,
                     highlightFraction: nil, isNearlyUsed: percent >= LimitStanding.warningPercent,
                     note: nil
@@ -328,8 +334,8 @@ public struct UsagePanelPresenter: Sendable {
         }
         return standings.enumerated().map { index, standing in
             let detail = standing.resetsAt.map { reset in
-                "frees up \(format.moment(reset, now: now)) · in \(format.duration(reset.timeIntervalSince(now)))"
-            } ?? ""
+                "Resets \(format.moment(reset, now: now)) · in \(format.duration(reset.timeIntervalSince(now)))"
+            } ?? "Reset time unavailable"
             return BarRowModel(
                 title: account.map {
                     "\($0) · \(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))"

@@ -57,12 +57,28 @@ struct OverlayPresenterTests {
         #expect(strip.items[1].accessibilityLabel.contains("Add retry to the image generation call"))
     }
 
-    @Test func theRestingStripRanksSpendAndContext() async throws {
+    @Test func theRestingStripRanksKnownUSDCostAheadOfUnpricedSessions() async throws {
         let strip = presenter.strip(try await Self.fakeReport(), hovered: nil, open: nil, acknowledged: [])
         // The expanded strip keeps start order; the collapsed strip uses priority.
         #expect(strip.items.map(\.id) == ["s_vid", "s_img", "s_bug"])
+        // This design fixture supplies a synthetic USD value for Codex; live Codex readings
+        // have no price and follow priced sessions by context instead.
         #expect(strip.items.sorted { $0.priority < $1.priority }.map(\.id)
             == ["s_bug", "s_vid", "s_img"])
+    }
+
+    @Test func compactRankUsesUSDThenContextAndActivityForUnpricedProviders() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let values = [
+            CompactRank(id: "credits", costUSD: nil, contextFraction: 0.7, lastActivityAt: now),
+            CompactRank(id: "cheap", costUSD: 0.1, contextFraction: 0.1, lastActivityAt: now - 500),
+            CompactRank(id: "recent", costUSD: nil, contextFraction: 0.5, lastActivityAt: now),
+            CompactRank(id: "older", costUSD: nil, contextFraction: 0.5, lastActivityAt: now - 100),
+            CompactRank(id: "expensive", costUSD: 2, contextFraction: nil, lastActivityAt: now - 900),
+            CompactRank(id: "unknown", costUSD: nil, contextFraction: nil, lastActivityAt: now),
+        ]
+        #expect(CompactRank.ordered(values).map(\.id)
+            == ["expensive", "cheap", "credits", "recent", "older", "unknown"])
     }
 
     @Test func hoverAndOpenHighlights() async throws {

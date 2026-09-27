@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// A single inset glass rail that widens into the session list. Keeping the glass itself alive
@@ -34,17 +33,25 @@ struct StripView: View {
                     RestingContents(model: model, onUsage: onUsage)
                 }
             }
-            // The handle is deliberately outside this dwell target, so placing the pointer over
-            // the drag affordance cannot open a resting rail.
-            .contentShape(.rect)
-            // AppKit keeps the tracking area as this view grows from the right edge. Unlike
-            // SwiftUI's transient hover region, it does not manufacture a leave while the
-            // pointer remains inside the newly enlarged frame.
-            .background(StripHoverTrackingArea(onPointerMoved: onPointerMoved, onPointerLeft: onPointerLeft))
         }
         .frame(width: model.isExpanded ? StripLayout.expandedWidth : StripLayout.restingWidth)
-        .padding(.vertical, model.isExpanded ? 0 : StripLayout.compactVerticalInset)
+        .padding(.vertical, StripLayout.compactVerticalInset)
+        .contentShape(.rect)
         .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.stripRadius))
+        // Keep one hover region while the compact and expanded contents swap. The coordinate
+        // gate excludes the handle, but an exit from the actual rail always closes it.
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point):
+                if model.isExpanded || StripLayout.isCompactHoverTarget(y: point.y) {
+                    onPointerMoved(point)
+                } else {
+                    onPointerLeft()
+                }
+            case .ended:
+                onPointerLeft()
+            }
+        }
         .offset(y: offset)
         .animation(transitionAnimation, value: model.isExpanded)
         .animation(transitionAnimation, value: offset)
@@ -89,60 +96,6 @@ struct StripView: View {
                 start = nil
                 onDragEnd()
             }
-    }
-}
-
-/// An AppKit tracking area owns hover entry, movement and exit for the session content only.
-/// It is deliberately behind the SwiftUI controls, so clicks and the handle's drag gesture keep
-/// their normal ownership.
-private struct StripHoverTrackingArea: NSViewRepresentable {
-    let onPointerMoved: (CGPoint) -> Void
-    let onPointerLeft: () -> Void
-
-    func makeNSView(context: Context) -> TrackingView {
-        TrackingView(onPointerMoved: onPointerMoved, onPointerLeft: onPointerLeft)
-    }
-
-    func updateNSView(_ view: TrackingView, context: Context) {
-        view.onPointerMoved = onPointerMoved
-        view.onPointerLeft = onPointerLeft
-    }
-
-    final class TrackingView: NSView {
-        var onPointerMoved: (CGPoint) -> Void
-        var onPointerLeft: () -> Void
-        private var trackingArea: NSTrackingArea?
-
-        init(onPointerMoved: @escaping (CGPoint) -> Void, onPointerLeft: @escaping () -> Void) {
-            self.onPointerMoved = onPointerMoved
-            self.onPointerLeft = onPointerLeft
-            super.init(frame: .zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { nil }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            window?.acceptsMouseMovedEvents = true
-        }
-
-        override func updateTrackingAreas() {
-            if let trackingArea { removeTrackingArea(trackingArea) }
-            let trackingArea = NSTrackingArea(
-                rect: .zero,
-                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
-                owner: self,
-                userInfo: nil
-            )
-            addTrackingArea(trackingArea)
-            self.trackingArea = trackingArea
-            super.updateTrackingAreas()
-        }
-
-        override func mouseEntered(with event: NSEvent) { onPointerMoved(NSEvent.mouseLocation) }
-        override func mouseMoved(with event: NSEvent) { onPointerMoved(NSEvent.mouseLocation) }
-        override func mouseExited(with event: NSEvent) { onPointerLeft() }
     }
 }
 
@@ -217,22 +170,56 @@ private struct ExpandedContents: View {
     let onUsage: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            VStack(spacing: 0) { items; UsageButton(action: onUsage).padding(.top, 6) }
-            VStack(spacing: 0) {
-                ScrollView(.vertical) { items }.scrollIndicators(.never)
-                UsageButton(action: onUsage).padding(.top, 6)
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("SESSIONS")
+                    .font(TypeScale.font(TypeScale.caption, .semibold))
+                    .tracking(1)
+                    .foregroundStyle(Theme.secondary)
+                Text("\(model.items.count)")
+                    .font(TypeScale.font(TypeScale.caption, .semibold))
+                    .foregroundStyle(Theme.primary)
+                Spacer(minLength: 4)
+                let waiting = model.items.filter(\.needsUser).count
+                if waiting > 0 {
+                    Circle().fill(Theme.amber).frame(width: 5, height: 5)
+                    Text("\(waiting) waiting")
+                        .font(TypeScale.font(TypeScale.caption, .medium))
+                        .foregroundStyle(Theme.secondary)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 6)
+            ViewThatFits(in: .vertical) {
+                VStack(spacing: 0) { items; UsageButton(action: onUsage).padding(.top, 6) }
+                VStack(spacing: 0) {
+                    ScrollView(.vertical) { items }.scrollIndicators(.automatic)
+                    UsageButton(action: onUsage).padding(.top, 6)
+                }
             }
         }
-        .padding(.bottom, 4)
     }
 
     private var items: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 0) {
             ForEach(model.items) { item in
                 StripItemView(item: item)
                     .onHover { inside in onHover(item.id, inside) }
                     .onTapGesture { onClick(item.id) }
+                if item.id != model.items.last?.id {
+                    Rectangle()
+                        .fill(Theme.divider)
+                        .frame(height: 0.5)
+                        .padding(.leading, 10)
+                }
+            }
+            if model.items.isEmpty {
+                Text("No active sessions")
+                    .font(TypeScale.font(TypeScale.caption, .medium))
+                    .foregroundStyle(Theme.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
             }
         }
         .padding(.horizontal, 10)
@@ -243,7 +230,7 @@ private struct StripItemView: View {
     let item: StripItemModel
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             AgentMark(agent: item.ring.agent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
@@ -257,6 +244,7 @@ private struct StripItemView: View {
                     // The project and branch share this two-line budget. A long branch cannot
                     // grow a row by taking a third line below its project.
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(spacing: 3) {
@@ -274,21 +262,20 @@ private struct StripItemView: View {
             .frame(width: 40)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 12).fill(highlightFill))
+        .padding(.vertical, 3)
+        .background(item.highlight == .hovered ? Theme.lift(0.07) : .clear)
+        .overlay(alignment: .leading) {
+            if item.highlight == .selected {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Theme.agent(item.ring.agent))
+                    .frame(width: 3, height: 36)
+            }
+        }
         .contentShape(.rect)
         .help(item.title)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.accessibilityLabel)
         .accessibilityAddTraits(.isButton)
-    }
-
-    private var highlightFill: Color {
-        switch item.highlight {
-        case .none: .clear
-        case .hovered: Theme.lift(0.16)
-        case .selected: Theme.lift(0.28)
-        }
     }
 
     private var context: String {

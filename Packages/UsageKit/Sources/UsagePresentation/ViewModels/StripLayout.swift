@@ -23,19 +23,23 @@ public enum StripLayout {
     /// The pointer moves this far with the button down before the strip is picked up. Until
     /// then nothing changes, so a click on the handle leaves the strip as it was.
     public static let dragThreshold: CGFloat = 4
-    /// The compact rail shows a handle and the two highest-priority session context rings.
+    /// The compact rail shows a handle and four session context rings.
     public static let handleBand: CGFloat = 16
     public static let handleHitWidth: CGFloat = restingWidth
     public static let handleMarkWidth: CGFloat = 14
     /// Air between the drag affordance and the first compact session indicator.
     public static let compactHandleToContentSpacing: CGFloat = 6
-    public static let compactSessionLimit = 2
+    public static let compactSessionLimit = 4
     public static let compactRingBand: CGFloat = 24
     public static let compactRingSpacing: CGFloat = 4
     /// The compact rail names sessions that do not fit instead of silently hiding them.
     public static let compactOverflowBand: CGFloat = 16
     public static let compactOverflowSpacing: CGFloat = 4
     public static let compactVerticalInset: CGFloat = 8
+    /// The compact handle is drag-only; the rings and overflow count start the dwell.
+    public static func isCompactHoverTarget(y: CGFloat) -> Bool {
+        y >= compactVerticalInset + handleBand + compactHandleToContentSpacing
+    }
     /// Maximum height when both compact indicators and the overflow count are present.
     public static let compactHeight = handleBand
         + compactHandleToContentSpacing
