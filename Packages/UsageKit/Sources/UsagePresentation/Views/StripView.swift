@@ -102,20 +102,7 @@ private struct RestingContents: View {
     var body: some View {
         VStack(spacing: StripLayout.compactRingSpacing) {
             ForEach(StripLayout.compactItems(from: model.items)) { item in
-                SessionRing(model: item.ring)
-                    .scaleEffect(2.0 / 3.0)
-                    .frame(width: StripLayout.compactRingBand, height: StripLayout.compactRingBand)
-                    .overlay(alignment: .bottomLeading) {
-                        AgentMark(agent: item.ring.agent)
-                            .scaleEffect(0.4)
-                            .frame(width: 10, height: 10)
-                            .offset(x: -1, y: 1)
-                    }
-                    .overlay(alignment: .topTrailing) {
-                        if item.needsUser {
-                            NeedsYouDot(pulses: item.pulses, diameter: 7).offset(x: 1, y: -1)
-                        }
-                    }
+                CompactContextIndicator(ring: item.ring, needsUser: item.needsUser, pulses: item.pulses)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(item.accessibilityLabel)
             }
@@ -132,6 +119,36 @@ private struct RestingContents: View {
             }
         }
         .frame(height: StripLayout.compactContentHeight(for: model.items.count))
+    }
+}
+
+/// The resting tab needs a readable provider cue and context state, without the expanded rail's
+/// tiny token label. Its arc uses the same threshold colour as a full session ring.
+private struct CompactContextIndicator: View {
+    let ring: RingModel
+    let needsUser: Bool
+    let pulses: Bool
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Theme.track, lineWidth: 2.5)
+            Circle()
+                .trim(from: 0, to: ring.fraction)
+                .stroke(
+                    ring.isNearlyFull ? Theme.red : Theme.ringColor(ring.agent),
+                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+            AgentMark(agent: ring.agent)
+                .scaleEffect(0.65)
+                .frame(width: 16, height: 16)
+        }
+        .frame(width: StripLayout.compactRingBand, height: StripLayout.compactRingBand)
+        .overlay(alignment: .topTrailing) {
+            if needsUser {
+                NeedsYouDot(pulses: pulses, diameter: 7).offset(x: 1, y: -1)
+            }
+        }
     }
 }
 
