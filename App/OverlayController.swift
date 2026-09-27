@@ -7,6 +7,13 @@ import UsagePresentation
 /// still responds the moment it is pressed.
 private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// A transparent SwiftUI root must not consume a click when none of its visible children
+    /// owns that point. Returning nil lets AppKit continue looking beneath the overlay window.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
+    }
 }
 
 /// Puts the overlay on screen and wires the behaviour SwiftUI cannot do alone:

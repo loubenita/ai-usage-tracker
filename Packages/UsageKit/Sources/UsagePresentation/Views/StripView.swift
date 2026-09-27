@@ -9,7 +9,8 @@ struct StripView: View {
     let dragOrigin: CGFloat
     let isDragging: Bool
     let restHeight: CGFloat
-    let onPointer: (_ inside: Bool) -> Void
+    let onPointerMoved: () -> Void
+    let onPointerLeft: () -> Void
     let onHover: (_ sessionID: String, _ inside: Bool) -> Void
     let onClick: (String) -> Void
     let onUsage: () -> Void
@@ -36,10 +37,15 @@ struct StripView: View {
                     )
                 }
             }
-            // The handle is deliberately outside this hover target: placing the pointer over
-            // the drag affordance must leave a resting rail compact.
+            // The handle is deliberately outside this dwell target, so placing the pointer over
+            // the drag affordance cannot open a resting rail.
             .contentShape(.rect)
-            .onHover(perform: onPointer)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active: onPointerMoved()
+                case .ended: onPointerLeft()
+                }
+            }
         }
         .frame(width: model.isExpanded ? StripLayout.expandedWidth : StripLayout.restingWidth)
         .padding(.vertical, 8)
@@ -98,33 +104,18 @@ private struct RestingContents: View {
     var body: some View {
         let ranked = model.items.sorted { $0.priority < $1.priority }
         let visible = StripLayout.visible(count: ranked.count, capacity: capacity)
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             ForEach(ranked.prefix(visible.shown)) { item in
                 VStack(spacing: 2) {
                     SessionRing(model: item.ring)
                         .overlay(alignment: .topTrailing) {
                             if item.needsUser { NeedsYouDot(pulses: item.pulses, diameter: 8).offset(x: 1, y: -1) }
                         }
-                    Text(item.time)
-                        .font(TypeScale.font(10, .semibold))
-                        .foregroundStyle(Theme.timer)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .staticDigits()
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(item.accessibilityLabel)
             }
-            if visible.hidden > 0 {
-                Text("+\(visible.hidden)")
-                    .font(TypeScale.font(TypeScale.caption, .semibold))
-                    .foregroundStyle(Theme.primary)
-                    .frame(width: 36, height: StripLayout.restChipHeight)
-                    .background(Capsule().fill(Theme.lift(0.16)))
-                    .accessibilityLabel("\(visible.hidden) more sessions")
-            }
         }
-        .padding(.horizontal, 8)
         .padding(.bottom, 4)
     }
 }

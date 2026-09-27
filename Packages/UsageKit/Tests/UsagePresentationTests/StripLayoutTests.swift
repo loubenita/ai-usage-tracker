@@ -6,7 +6,7 @@ import Testing
 struct StripLayoutTests {
     @Test func theExpandedListStaysCompact() {
         #expect(StripLayout.expandedWidth == 236)
-        #expect(StripLayout.restingWidth == 64)
+        #expect(StripLayout.restingWidth == 36)
     }
 
     @Test func countsWholeItemsAfterThePaddingAndStopsAtThree() {
@@ -85,9 +85,9 @@ struct StripLayoutTests {
     }
 
     @Test func theDragHandleStaysFullyVisibleAtTheScreenEdge() {
-        #expect(StripLayout.handleHitWidth == 56)
-        #expect(StripLayout.handleMarkWidth == 28)
-        #expect(StripLayout.handleHitWidth / 2 == 28)
+        #expect(StripLayout.handleHitWidth == 36)
+        #expect(StripLayout.handleMarkWidth == 18)
+        #expect(StripLayout.handleHitWidth / 2 == 18)
     }
 
     // MARK: - Staying on the screen

@@ -5,7 +5,7 @@ public enum StripLayout {
     /// The expanded strip is a compact provider mark, task and context ring. Session and usage
     /// panels keep the wider reading column beside it.
     public static let expandedWidth: CGFloat = 236
-    public static let restingWidth: CGFloat = 64
+    public static let restingWidth: CGFloat = 36
     public static let panelWidth: CGFloat = 430
     /// Expanded strip + gap + panel + room for the soft glass shadow.
     public static let overlayWidth: CGFloat = expandedWidth + 8 + panelWidth + 32
@@ -13,10 +13,10 @@ public enum StripLayout {
     /// The resting strip shows up to this many sessions and counts the rest in "+N".
     public static let restLimit = 3
 
-    /// Inset rail: a visible handle, then a complete 36pt ring and compact time every 60pt.
+    /// Slim edge rail: a drag handle, then context rings without labels or timers.
     static let restPadding: CGFloat = 8 * 2 + handleBand + 4
-    static let restItemPitch: CGFloat = 50 + 10
-    static let restItemHeight: CGFloat = 50
+    static let restItemPitch: CGFloat = 28 + 8
+    static let restItemHeight: CGFloat = 28
     /// The "+N" band across the foot of the strip, and the gap above it.
     static let restChipHeight: CGFloat = 26
     static let restChipGap: CGFloat = 10
@@ -42,10 +42,10 @@ public enum StripLayout {
     /// The pointer moves this far with the button down before the strip is picked up. Until
     /// then nothing changes, so a click on the handle leaves the strip as it was.
     public static let dragThreshold: CGFloat = 4
-    /// The handle remains visible at rest, so moving the rail does not require discovering hover.
-    public static let handleBand: CGFloat = 24
-    public static let handleHitWidth: CGFloat = 56
-    public static let handleMarkWidth: CGFloat = 28
+    /// The slim handle remains visible at rest, so moving the rail does not require hover.
+    public static let handleBand: CGFloat = 16
+    public static let handleHitWidth: CGFloat = 36
+    public static let handleMarkWidth: CGFloat = 18
     /// The screenshot-only drag state starts before SwiftUI has measured the resting strip.
     /// This keeps a representative 240pt expanded strip visibly above centre even then.
     public static let forcedDragOffset: CGFloat = -240

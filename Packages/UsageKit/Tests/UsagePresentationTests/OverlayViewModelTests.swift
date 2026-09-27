@@ -39,6 +39,33 @@ struct OverlayViewModelTests {
         #expect(viewModel.strip?.isExpanded == false)
     }
 
+    @Test func compactContentExpandsOnlyAfterThePointerSettles() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let repository = FakeUsageRepository(calendar: calendar)
+        let viewModel = OverlayViewModel(
+            repository: repository,
+            timeSource: FixedTime(now: repository.anchor),
+            calendar: calendar,
+            stripHoverDelay: .milliseconds(40)
+        )
+        await viewModel.load()
+
+        viewModel.pointerMovedOverCompactStrip()
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(viewModel.strip?.isExpanded == false)
+
+        // Movement restarts the dwell timer instead of expanding while the pointer is in motion.
+        viewModel.pointerMovedOverCompactStrip()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(viewModel.strip?.isExpanded == false)
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(viewModel.strip?.isExpanded == true)
+
+        viewModel.pointerLeftStrip()
+        #expect(viewModel.strip?.isExpanded == false)
+    }
+
     @Test func theStripStaysFullWhileAPanelIsOpen() async {
         let viewModel = await makeViewModel()
         viewModel.click("s_img")

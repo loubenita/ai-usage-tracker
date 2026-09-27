@@ -34,11 +34,13 @@ public struct OverlayView: View {
 
     /// Room kept free above and below the strip, so it never touches the menu bar or the Dock.
     private static let screenMargin: CGFloat = 8
+    /// Keeps the drag handle out of macOS's menu-bar reveal area in a full-screen Space.
+    private static let verticalSafeMargin: CGFloat = 40
 
     public var body: some View {
         GeometryReader { geometry in
-            content(availableHeight: geometry.size.height - 2 * Self.screenMargin)
-                .padding(.vertical, Self.screenMargin)
+            content(availableHeight: geometry.size.height - 2 * Self.verticalSafeMargin)
+                .padding(.vertical, Self.verticalSafeMargin)
         }
     }
 
@@ -72,8 +74,11 @@ public struct OverlayView: View {
                         dragOrigin: StripLayout.dragOrigin(for: strip),
                         isDragging: viewModel.isDraggingStrip,
                         restHeight: restStripHeight,
-                        onPointer: { inside in
-                            if !locksExpandedStrip { viewModel.pointerOverStrip(inside) }
+                        onPointerMoved: {
+                            if !locksExpandedStrip { viewModel.pointerMovedOverCompactStrip() }
+                        },
+                        onPointerLeft: {
+                            if !locksExpandedStrip { viewModel.pointerLeftStrip() }
                         },
                         onHover: { id, inside in
                             inside ? viewModel.hover(id) : viewModel.endHover(id)
@@ -93,11 +98,13 @@ public struct OverlayView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
             .contextMenu {
                 Button("Quit", action: onQuit)
             }
         }
+        // Position the glass at the edge without making the transparent window a full-size hit
+        // target. Empty space remains available to whatever is behind the overlay.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
     }
 
     @ViewBuilder private var openPanel: some View {
