@@ -52,16 +52,48 @@ struct OverlayViewModelTests {
         )
         await viewModel.load()
 
-        viewModel.pointerMovedOverCompactStrip(at: .zero)
+        viewModel.pointerMovedOverStrip(at: .zero)
         #expect(await waitsForSleeps(1, from: sleeper))
 
         // Duplicate delivery for an unchanged cursor position leaves the dwell intact.
-        viewModel.pointerMovedOverCompactStrip(at: .zero)
+        viewModel.pointerMovedOverStrip(at: .zero)
         for _ in 0..<5 { await Task.yield() }
         #expect(await sleeper.calls == 1)
         await sleeper.releaseAll()
         #expect(await waitsForExpansion(of: viewModel))
 
+        viewModel.pointerMovedOverStrip()
+        viewModel.pointerLeftStrip()
+        #expect(viewModel.strip?.isExpanded == false)
+    }
+
+    @Test func compactRailUsesAThreeSecondDwellByDefault() {
+        #expect(OverlayViewModel.defaultStripHoverDelay == .seconds(3))
+    }
+
+    @Test func oneStaleExitFromTheExpandedGeometryDoesNotUndoTheDwell() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let repository = FakeUsageRepository(calendar: calendar)
+        let sleeper = HoverDwellSleeper()
+        let viewModel = OverlayViewModel(
+            repository: repository,
+            timeSource: FixedTime(now: repository.anchor),
+            calendar: calendar,
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) }
+        )
+        await viewModel.load()
+
+        viewModel.pointerMovedOverStrip(at: .zero)
+        #expect(await waitsForSleeps(1, from: sleeper))
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
+
+        // Changing the rail's frame can end the compact tracking region once. That event is
+        // not a real departure, while the following normal leave still closes the rail.
+        viewModel.pointerLeftStrip()
+        #expect(viewModel.strip?.isExpanded == true)
+        viewModel.pointerMovedOverStrip(at: .zero)
         viewModel.pointerLeftStrip()
         #expect(viewModel.strip?.isExpanded == false)
     }
@@ -79,10 +111,10 @@ struct OverlayViewModelTests {
         )
         await viewModel.load()
 
-        viewModel.pointerMovedOverCompactStrip(at: .zero)
+        viewModel.pointerMovedOverStrip(at: .zero)
         #expect(await waitsForSleeps(1, from: sleeper))
         // Even a subpoint change means the cursor moved and starts a new full dwell.
-        viewModel.pointerMovedOverCompactStrip(at: CGPoint(x: 0.5, y: 0))
+        viewModel.pointerMovedOverStrip(at: CGPoint(x: 0.5, y: 0))
         #expect(await waitsForSleeps(2, from: sleeper))
         #expect(viewModel.strip?.isExpanded == false)
         await sleeper.releaseAll()
@@ -200,7 +232,7 @@ struct OverlayViewModelTests {
         // Drag start cancels hover, so dropping keeps the rail compact until the count area
         // receives a fresh, still-pointer dwell.
         #expect(viewModel.strip?.isExpanded == false)
-        viewModel.pointerMovedOverCompactStrip()
+        viewModel.pointerMovedOverStrip()
         #expect(await waitsForSleeps(1, from: sleeper))
         await sleeper.releaseAll()
         #expect(await waitsForExpansion(of: viewModel))

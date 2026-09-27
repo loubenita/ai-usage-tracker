@@ -16,6 +16,8 @@ import UsageDomain
 public final class OverlayViewModel {
     /// Process discovery is fresh enough to feel live without launching `ps` every two seconds.
     public static let defaultReloadInterval = 6
+    /// The compact rail waits for a deliberate still hover before revealing the session list.
+    public static let defaultStripHoverDelay: Duration = .seconds(3)
     public private(set) var report: UsageReport?
     public private(set) var hoveredSessionID: String?
     public private(set) var openSessionID: String?
@@ -61,6 +63,9 @@ public final class OverlayViewModel {
     @ObservationIgnored private var totalsTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverOrigin: CGPoint?
+    /// A geometry update can emit one stale hover exit as the compact target becomes the full
+    /// rail. That exit belongs to the old target and must not immediately undo the expansion.
+    @ObservationIgnored private var ignoresNextExpandedStripExit = false
     /// How many times the totals were built: the tests count them.
     @ObservationIgnored private(set) var totalsBuilds = 0
     /// When the totals are next rebuilt on their own; the overview counts down to it.
@@ -77,7 +82,7 @@ public final class OverlayViewModel {
         calendar: Calendar,
         reloadInterval: Int = OverlayViewModel.defaultReloadInterval,
         totalsInterval: Int = 600,
-        stripHoverDelay: Duration = .seconds(1),
+        stripHoverDelay: Duration = OverlayViewModel.defaultStripHoverDelay,
         stripHoverSleeper: (@Sendable (Duration) async -> Bool)? = nil,
         opener: (any SessionOpening)? = nil,
         stripOffset: CGFloat = 0,
@@ -219,13 +224,18 @@ public final class OverlayViewModel {
         stripHoverTask?.cancel()
         stripHoverTask = nil
         stripHoverOrigin = nil
+        ignoresNextExpandedStripExit = false
         isPointerOverStrip = inside
     }
 
-    /// Compact content opens only after the pointer has been still over it for one second.
-    /// Only an identical repeated hover event leaves the dwell intact; the handle never calls this intent.
-    public func pointerMovedOverCompactStrip(at location: CGPoint = .zero) {
-        guard !isDraggingStrip, !isPointerOverStrip else { return }
+    /// Compact content opens only after three continuous seconds with the pointer still.
+    /// Every coordinate change starts a fresh dwell; the handle never calls this intent.
+    public func pointerMovedOverStrip(at location: CGPoint = .zero) {
+        guard !isDraggingStrip else { return }
+        if isPointerOverStrip {
+            ignoresNextExpandedStripExit = false
+            return
+        }
         if stripHoverOrigin == location { return }
         stripHoverTask?.cancel()
         stripHoverOrigin = location
@@ -233,6 +243,7 @@ public final class OverlayViewModel {
         stripHoverTask = Task { [weak self] in
             guard await self?.stripHoverSleeper(delay) == true, !Task.isCancelled else { return }
             self?.isPointerOverStrip = true
+            self?.ignoresNextExpandedStripExit = true
             self?.stripHoverTask = nil
             self?.stripHoverOrigin = nil
         }
@@ -252,6 +263,11 @@ public final class OverlayViewModel {
         stripHoverTask?.cancel()
         stripHoverTask = nil
         stripHoverOrigin = nil
+        if isPointerOverStrip, ignoresNextExpandedStripExit {
+            ignoresNextExpandedStripExit = false
+            return
+        }
+        ignoresNextExpandedStripExit = false
         isPointerOverStrip = false
     }
 

@@ -22,17 +22,15 @@ struct StripView: View {
     @State private var start: CGFloat?
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: model.isExpanded ? 0 : StripLayout.compactHandleToContentSpacing) {
             if !model.isExpanded {
                 handle
             }
             VStack(spacing: 0) {
                 if model.isExpanded {
                     ExpandedContents(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage)
-                        .transition(.opacity)
                 } else {
                     RestingContents(model: model, onUsage: onUsage)
-                        .transition(.opacity)
                 }
             }
             // The handle is deliberately outside this dwell target, so placing the pointer over
@@ -46,7 +44,7 @@ struct StripView: View {
             }
         }
         .frame(width: model.isExpanded ? StripLayout.expandedWidth : StripLayout.restingWidth)
-        .padding(.vertical, StripLayout.compactVerticalInset)
+        .padding(.vertical, model.isExpanded ? 0 : StripLayout.compactVerticalInset)
         .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.stripRadius))
         .offset(y: offset)
         .animation(transitionAnimation, value: model.isExpanded)
@@ -54,7 +52,7 @@ struct StripView: View {
     }
 
     private var transitionAnimation: Animation? {
-        reduceMotion || isDragging ? nil : .smooth(duration: 0.24)
+        reduceMotion || isDragging ? nil : .smooth(duration: 0.42, extraBounce: 0)
     }
 
     /// A visible, generous target remains in both sizes, so its gesture never competes with
@@ -117,6 +115,13 @@ private struct RestingContents: View {
                     .accessibilityLabel("No active sessions. Open usage")
                     .accessibilityAddTraits(.isButton)
             }
+            if StripLayout.compactOverflowCount(for: model.items) > 0 {
+                Text("+\(StripLayout.compactOverflowCount(for: model.items))")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.secondary)
+                    .frame(width: StripLayout.compactRingBand, height: StripLayout.compactOverflowBand)
+                    .accessibilityLabel("\(StripLayout.compactOverflowCount(for: model.items)) more sessions")
+            }
         }
         .frame(height: StripLayout.compactContentHeight(for: model.items.count))
     }
@@ -177,6 +182,7 @@ private struct ExpandedContents: View {
                     .onTapGesture { onClick(item.id) }
             }
         }
+        .padding(.horizontal, 10)
     }
 }
 
