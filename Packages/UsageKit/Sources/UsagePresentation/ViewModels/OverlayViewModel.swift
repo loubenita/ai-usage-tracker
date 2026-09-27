@@ -50,6 +50,7 @@ public final class OverlayViewModel {
     private let reloadInterval: Int
     private let totalsInterval: Int
     private let stripHoverDelay: Duration
+    @ObservationIgnored private let stripHoverSleeper: @Sendable (Duration) async -> Bool
     static let pendingTotalsInterval = 10
     /// The open sessions, as last read.
     @ObservationIgnored private var sessions: UsageRecords?
@@ -77,6 +78,7 @@ public final class OverlayViewModel {
         reloadInterval: Int = OverlayViewModel.defaultReloadInterval,
         totalsInterval: Int = 600,
         stripHoverDelay: Duration = .seconds(1),
+        stripHoverSleeper: (@Sendable (Duration) async -> Bool)? = nil,
         opener: (any SessionOpening)? = nil,
         stripOffset: CGFloat = 0,
         saveStripOffset: (@MainActor (CGFloat) -> Void)? = nil
@@ -90,6 +92,7 @@ public final class OverlayViewModel {
         self.reloadInterval = max(reloadInterval, 1)
         self.totalsInterval = max(totalsInterval, 1)
         self.stripHoverDelay = stripHoverDelay
+        self.stripHoverSleeper = stripHoverSleeper ?? Self.sleepForStripHover
         let formatter = UsageFormatter(calendar: calendar)
         self.presenter = OverlayPresenter(formatter: formatter)
         self.usagePresenter = UsagePanelPresenter(formatter: formatter)
@@ -228,15 +231,19 @@ public final class OverlayViewModel {
         stripHoverOrigin = location
         let delay = stripHoverDelay
         stripHoverTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: delay)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
+            guard await self?.stripHoverSleeper(delay) == true, !Task.isCancelled else { return }
             self?.isPointerOverStrip = true
             self?.stripHoverTask = nil
             self?.stripHoverOrigin = nil
+        }
+    }
+
+    private static func sleepForStripHover(_ delay: Duration) async -> Bool {
+        do {
+            try await Task.sleep(for: delay)
+            return !Task.isCancelled
+        } catch {
+            return false
         }
     }
 

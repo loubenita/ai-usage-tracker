@@ -43,22 +43,24 @@ struct OverlayViewModelTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
         let repository = FakeUsageRepository(calendar: calendar)
+        let sleeper = HoverDwellSleeper()
         let viewModel = OverlayViewModel(
             repository: repository,
             timeSource: FixedTime(now: repository.anchor),
             calendar: calendar,
-            stripHoverDelay: .milliseconds(40)
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) }
         )
         await viewModel.load()
 
         viewModel.pointerMovedOverCompactStrip(at: .zero)
-        try? await Task.sleep(for: .milliseconds(20))
-        #expect(viewModel.strip?.isExpanded == false)
+        #expect(await waitsForSleeps(1, from: sleeper))
 
         // Duplicate delivery for an unchanged cursor position leaves the dwell intact.
         viewModel.pointerMovedOverCompactStrip(at: .zero)
-        try? await Task.sleep(for: .milliseconds(30))
-        #expect(viewModel.strip?.isExpanded == true)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(await sleeper.calls == 1)
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
 
         viewModel.pointerLeftStrip()
         #expect(viewModel.strip?.isExpanded == false)
@@ -68,22 +70,23 @@ struct OverlayViewModelTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
         let repository = FakeUsageRepository(calendar: calendar)
+        let sleeper = HoverDwellSleeper()
         let viewModel = OverlayViewModel(
             repository: repository,
             timeSource: FixedTime(now: repository.anchor),
             calendar: calendar,
-            stripHoverDelay: .milliseconds(40)
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) }
         )
         await viewModel.load()
 
         viewModel.pointerMovedOverCompactStrip(at: .zero)
-        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await waitsForSleeps(1, from: sleeper))
         // Even a subpoint change means the cursor moved and starts a new full dwell.
         viewModel.pointerMovedOverCompactStrip(at: CGPoint(x: 0.5, y: 0))
-        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await waitsForSleeps(2, from: sleeper))
         #expect(viewModel.strip?.isExpanded == false)
-        try? await Task.sleep(for: .milliseconds(20))
-        #expect(viewModel.strip?.isExpanded == true)
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
     }
 
     @Test func theStripStaysFullWhileAPanelIsOpen() async {
@@ -170,9 +173,11 @@ struct OverlayViewModelTests {
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
         let repository = FakeUsageRepository(calendar: calendar)
         let saved = Saved()
+        let sleeper = HoverDwellSleeper()
         let viewModel = OverlayViewModel(
             repository: repository, timeSource: FixedTime(now: repository.anchor), calendar: calendar,
-            stripHoverDelay: .milliseconds(20), stripOffset: -40, saveStripOffset: { saved.value = $0 }
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) },
+            stripOffset: -40, saveStripOffset: { saved.value = $0 }
         )
         await viewModel.load()
         // It starts where it was left, and moves only once it has been picked up.
@@ -196,8 +201,9 @@ struct OverlayViewModelTests {
         // receives a fresh, still-pointer dwell.
         #expect(viewModel.strip?.isExpanded == false)
         viewModel.pointerMovedOverCompactStrip()
-        try? await Task.sleep(for: .milliseconds(30))
-        #expect(viewModel.strip?.isExpanded == true)
+        #expect(await waitsForSleeps(1, from: sleeper))
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
         viewModel.pointerOverStrip(false)
         #expect(viewModel.strip?.isExpanded == false)
     }
@@ -250,6 +256,39 @@ struct OverlayViewModelTests {
         viewModel.click("s_img")
         viewModel.hover("s_vid")
         #expect(viewModel.strip?.items.map(\.highlight) == [.hovered, .selected, .none])
+    }
+
+    private func waitsForSleeps(_ expected: Int, from sleeper: HoverDwellSleeper) async -> Bool {
+        for _ in 0..<200 {
+            if await sleeper.calls >= expected { return true }
+            await Task.yield()
+        }
+        return false
+    }
+
+    private func waitsForExpansion(of viewModel: OverlayViewModel) async -> Bool {
+        for _ in 0..<200 {
+            if viewModel.strip?.isExpanded == true { return true }
+            await Task.yield()
+        }
+        return false
+    }
+}
+
+private actor HoverDwellSleeper {
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private(set) var calls = 0
+
+    func sleep(for _: Duration) async -> Bool {
+        calls += 1
+        await withCheckedContinuation { continuations.append($0) }
+        return !Task.isCancelled
+    }
+
+    func releaseAll() {
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
     }
 }
 
