@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A single inset glass rail that widens into the session list. Keeping the glass itself alive
@@ -36,12 +37,10 @@ struct StripView: View {
             // The handle is deliberately outside this dwell target, so placing the pointer over
             // the drag affordance cannot open a resting rail.
             .contentShape(.rect)
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let location): onPointerMoved(location)
-                case .ended: onPointerLeft()
-                }
-            }
+            // AppKit keeps the tracking area as this view grows from the right edge. Unlike
+            // SwiftUI's transient hover region, it does not manufacture a leave while the
+            // pointer remains inside the newly enlarged frame.
+            .background(StripHoverTrackingArea(onPointerMoved: onPointerMoved, onPointerLeft: onPointerLeft))
         }
         .frame(width: model.isExpanded ? StripLayout.expandedWidth : StripLayout.restingWidth)
         .padding(.vertical, model.isExpanded ? 0 : StripLayout.compactVerticalInset)
@@ -52,7 +51,7 @@ struct StripView: View {
     }
 
     private var transitionAnimation: Animation? {
-        reduceMotion || isDragging ? nil : .smooth(duration: 0.42, extraBounce: 0)
+        reduceMotion || isDragging ? nil : .smooth(duration: StripLayout.railTransitionDuration, extraBounce: 0)
     }
 
     /// A visible, generous target remains in both sizes, so its gesture never competes with
@@ -90,6 +89,60 @@ struct StripView: View {
                 start = nil
                 onDragEnd()
             }
+    }
+}
+
+/// An AppKit tracking area owns hover entry, movement and exit for the session content only.
+/// It is deliberately behind the SwiftUI controls, so clicks and the handle's drag gesture keep
+/// their normal ownership.
+private struct StripHoverTrackingArea: NSViewRepresentable {
+    let onPointerMoved: (CGPoint) -> Void
+    let onPointerLeft: () -> Void
+
+    func makeNSView(context: Context) -> TrackingView {
+        TrackingView(onPointerMoved: onPointerMoved, onPointerLeft: onPointerLeft)
+    }
+
+    func updateNSView(_ view: TrackingView, context: Context) {
+        view.onPointerMoved = onPointerMoved
+        view.onPointerLeft = onPointerLeft
+    }
+
+    final class TrackingView: NSView {
+        var onPointerMoved: (CGPoint) -> Void
+        var onPointerLeft: () -> Void
+        private var trackingArea: NSTrackingArea?
+
+        init(onPointerMoved: @escaping (CGPoint) -> Void, onPointerLeft: @escaping () -> Void) {
+            self.onPointerMoved = onPointerMoved
+            self.onPointerLeft = onPointerLeft
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.acceptsMouseMovedEvents = true
+        }
+
+        override func updateTrackingAreas() {
+            if let trackingArea { removeTrackingArea(trackingArea) }
+            let trackingArea = NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(trackingArea)
+            self.trackingArea = trackingArea
+            super.updateTrackingAreas()
+        }
+
+        override func mouseEntered(with event: NSEvent) { onPointerMoved(NSEvent.mouseLocation) }
+        override func mouseMoved(with event: NSEvent) { onPointerMoved(NSEvent.mouseLocation) }
+        override func mouseExited(with event: NSEvent) { onPointerLeft() }
     }
 }
 

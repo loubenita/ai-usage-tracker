@@ -71,7 +71,7 @@ struct OverlayViewModelTests {
         #expect(OverlayViewModel.defaultStripHoverDelay == .seconds(3))
     }
 
-    @Test func oneStaleExitFromTheExpandedGeometryDoesNotUndoTheDwell() async {
+    @Test func aTrueExitImmediatelyAfterExpansionClosesTheRail() async {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
         let repository = FakeUsageRepository(calendar: calendar)
@@ -89,11 +89,7 @@ struct OverlayViewModelTests {
         await sleeper.releaseAll()
         #expect(await waitsForExpansion(of: viewModel))
 
-        // Changing the rail's frame can end the compact tracking region once. That event is
-        // not a real departure, while the following normal leave still closes the rail.
-        viewModel.pointerLeftStrip()
-        #expect(viewModel.strip?.isExpanded == true)
-        viewModel.pointerMovedOverStrip(at: .zero)
+        // The view owns a stable tracking region, so the model treats every exit as genuine.
         viewModel.pointerLeftStrip()
         #expect(viewModel.strip?.isExpanded == false)
     }

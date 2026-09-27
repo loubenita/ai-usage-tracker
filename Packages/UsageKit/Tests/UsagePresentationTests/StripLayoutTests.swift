@@ -13,6 +13,7 @@ struct StripLayoutTests {
         #expect(StripLayout.compactHeight < 120)
         #expect(StripLayout.restingOverlayWidth == 76)
         #expect(StripLayout.expandedOverlayWidth == 276)
+        #expect(StripLayout.railTransitionDuration == 0.42)
         #expect(StripLayout.compactContentHeight(for: 0) == 24)
         #expect(StripLayout.compactContentHeight(for: 1) == 24)
         #expect(StripLayout.compactContentHeight(for: 2) == 52)

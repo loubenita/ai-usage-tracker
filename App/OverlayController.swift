@@ -41,7 +41,7 @@ final class OverlayController {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.position() }
+            MainActor.assumeIsolated { self?.position(animated: false) }
         }
         watchOpenState()
         watchOverlayBounds()
@@ -57,14 +57,20 @@ final class OverlayController {
     /// Against the screen's right edge, with only enough window width for the active glass.
     /// Keeping the transparent window narrow leaves the rest of the desktop available to the
     /// application behind it.
-    private func position() {
+    private func position(animated: Bool = false) {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
         let width = overlayWidth
-        panel.setFrame(
-            NSRect(x: screen.frame.maxX - width, y: visible.minY, width: width, height: visible.height),
-            display: true
-        )
+        let frame = NSRect(x: screen.frame.maxX - width, y: visible.minY, width: width, height: visible.height)
+        guard animated, panel.frame != frame else {
+            panel.setFrame(frame, display: true)
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = StripLayout.railTransitionDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
     }
 
     private var overlayWidth: CGFloat {
@@ -80,7 +86,7 @@ final class OverlayController {
             _ = viewModel.isOpen
         } onChange: { [weak self] in
             Task { @MainActor in
-                self?.position()
+                self?.position(animated: true)
                 self?.watchOverlayBounds()
             }
         }

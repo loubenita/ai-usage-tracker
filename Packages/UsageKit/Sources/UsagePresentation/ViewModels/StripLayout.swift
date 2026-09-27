@@ -13,6 +13,8 @@ public enum StripLayout {
     /// The transparent window is only as wide as its active glass state.
     public static let restingOverlayWidth = restingWidth + overlayEdgeInset + overlayShadowMargin
     public static let expandedOverlayWidth = expandedWidth + overlayEdgeInset + overlayShadowMargin
+    /// SwiftUI and the hosting panel share one resize timeline, so the rail stays one surface.
+    public static let railTransitionDuration: Double = 0.42
     /// Expanded strip + gap + panel + room for the soft glass shadow.
     public static let overlayWidth: CGFloat = expandedWidth + overlayEdgeInset + panelWidth + overlayShadowMargin
 

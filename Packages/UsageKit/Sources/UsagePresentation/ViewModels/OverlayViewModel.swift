@@ -63,9 +63,6 @@ public final class OverlayViewModel {
     @ObservationIgnored private var totalsTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverOrigin: CGPoint?
-    /// A geometry update can emit one stale hover exit as the compact target becomes the full
-    /// rail. That exit belongs to the old target and must not immediately undo the expansion.
-    @ObservationIgnored private var ignoresNextExpandedStripExit = false
     /// How many times the totals were built: the tests count them.
     @ObservationIgnored private(set) var totalsBuilds = 0
     /// When the totals are next rebuilt on their own; the overview counts down to it.
@@ -224,7 +221,6 @@ public final class OverlayViewModel {
         stripHoverTask?.cancel()
         stripHoverTask = nil
         stripHoverOrigin = nil
-        ignoresNextExpandedStripExit = false
         isPointerOverStrip = inside
     }
 
@@ -232,10 +228,7 @@ public final class OverlayViewModel {
     /// Every coordinate change starts a fresh dwell; the handle never calls this intent.
     public func pointerMovedOverStrip(at location: CGPoint = .zero) {
         guard !isDraggingStrip else { return }
-        if isPointerOverStrip {
-            ignoresNextExpandedStripExit = false
-            return
-        }
+        guard !isPointerOverStrip else { return }
         if stripHoverOrigin == location { return }
         stripHoverTask?.cancel()
         stripHoverOrigin = location
@@ -243,7 +236,6 @@ public final class OverlayViewModel {
         stripHoverTask = Task { [weak self] in
             guard await self?.stripHoverSleeper(delay) == true, !Task.isCancelled else { return }
             self?.isPointerOverStrip = true
-            self?.ignoresNextExpandedStripExit = true
             self?.stripHoverTask = nil
             self?.stripHoverOrigin = nil
         }
@@ -258,16 +250,11 @@ public final class OverlayViewModel {
         }
     }
 
-    /// Leaving the compact content cancels a pending expansion and restores the slim rail.
+    /// Leaving the stable tracking region cancels a pending expansion and restores the slim rail.
     public func pointerLeftStrip() {
         stripHoverTask?.cancel()
         stripHoverTask = nil
         stripHoverOrigin = nil
-        if isPointerOverStrip, ignoresNextExpandedStripExit {
-            ignoresNextExpandedStripExit = false
-            return
-        }
-        ignoresNextExpandedStripExit = false
         isPointerOverStrip = false
     }
 
