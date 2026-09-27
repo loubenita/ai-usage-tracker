@@ -169,19 +169,18 @@ private struct LimitListRow: View {
     }
 }
 
-/// Time, tokens and spend per agent, with the "All agents" total under a line.
+/// Time, tokens and spend per agent, with the "All agents" total under a line. Every column
+/// shares the panel width, so the values stay aligned with their headers and total on wide panels.
 private struct AgentTable: View {
     let model: AllAgentsModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 0) {
-                // Real weeks run to "886.8M" and "$464.46", so each column is wide enough
-                // for its longest number and the rows never touch.
-                Text(model.tableTitle).capsLabel().frame(width: 112, alignment: .leading)
-                header("time", width: 60)
-                header("tokens", width: 56)
-                header("spend", width: 60)
+            HStack(spacing: 12) {
+                Text(model.tableTitle).capsLabel().frame(maxWidth: .infinity, alignment: .leading)
+                header("time")
+                header("tokens")
+                header("spend")
             }
             ForEach(model.rows) { row(for: $0, bold: false) }
             if let total = model.total {
@@ -192,32 +191,37 @@ private struct AgentTable: View {
         }
     }
 
-    private func header(_ text: String, width: CGFloat) -> some View {
-        Text(text).font(TypeScale.captionFont).foregroundStyle(Theme.label).frame(width: width, alignment: .trailing)
+    private func header(_ text: String) -> some View {
+        Text(text)
+            .font(TypeScale.captionFont)
+            .foregroundStyle(Theme.label)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func row(for row: AgentTableRowModel, bold: Bool) -> some View {
         let weight: Font.Weight = bold ? .semibold : .regular
-        return HStack(spacing: 0) {
+        return HStack(spacing: 12) {
             HStack(spacing: 7) {
                 if let agent = row.agent { AgentDot(agent: agent) }
                 Text(row.name).font(TypeScale.font(TypeScale.body, weight)).foregroundStyle(Theme.primary)
             }
-            .frame(width: 112, alignment: .leading)
-            cell(row.time, width: 60, weight: weight)
-            cell(row.tokens, width: 56, weight: weight)
-            cell(row.spend, width: 60, weight: weight)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            cell(row.time, weight: weight)
+            cell(row.tokens, weight: weight)
+            cell(row.spend, weight: weight)
         }
         .staticDigits()
     }
 
-    private func cell(_ value: String?, width: CGFloat, weight: Font.Weight) -> some View {
+    private func cell(_ value: String?, weight: Font.Weight) -> some View {
         Text(value ?? "n/a")
             .font(TypeScale.font(TypeScale.body, weight))
             .foregroundStyle(value == nil ? Theme.faint : Theme.primary)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-            .frame(width: width, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 

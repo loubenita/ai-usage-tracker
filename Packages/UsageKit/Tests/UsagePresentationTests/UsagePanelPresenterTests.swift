@@ -129,28 +129,30 @@ struct UsagePanelPresenterTests {
         #expect(week.limits.first { $0.name == "Claude · Work week" }?.freesUp == "Reset time unavailable")
     }
 
-    @Test func staleSnapshotAtAResetDoesNotClaimTheOldPercentage() throws {
+    @Test func staleSnapshotAtAResetDoesNotClaimEitherEndOfTheOldPercentage() throws {
         let now = Date(timeIntervalSince1970: 1_790_000_000)
-        let snapshot = AccountUsageSnapshot(
-            id: "/profiles/personal", name: "Personal", agent: .claudeCode,
-            readAt: now - 27 * 60, fiveHourPercent: 100, weeklyPercent: 100
-        )
-        let records = UsageRecords(
-            turns: [], limits: [], sessionEvents: [], capturedAt: now, accountSnapshots: [snapshot]
-        )
-        let report = GenerateUsageReport(
-            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
-            calendar: calendar
-        )(records, now: now)
-
-        let today = try all(report)
-        #expect(today.limits == [
-            LimitListRowModel(
-                id: "claude-code-/profiles/personal-none", agent: .claudeCode, name: "Claude · Personal",
-                fraction: nil, used: "", freesUp: "no current data", isNearlyUsed: false
+        for percentage in [0.0, 100.0] {
+            let snapshot = AccountUsageSnapshot(
+                id: "/profiles/personal", name: "Personal", agent: .claudeCode,
+                readAt: now - 27 * 60, fiveHourPercent: percentage, weeklyPercent: percentage
             )
-        ])
-        #expect(try agent(report, .claudeCode, .today).limits.isEmpty)
+            let records = UsageRecords(
+                turns: [], limits: [], sessionEvents: [], capturedAt: now, accountSnapshots: [snapshot]
+            )
+            let report = GenerateUsageReport(
+                settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
+                calendar: calendar
+            )(records, now: now)
+
+            let today = try all(report)
+            #expect(today.limits == [
+                LimitListRowModel(
+                    id: "claude-code-/profiles/personal-none", agent: .claudeCode, name: "Claude · Personal",
+                    fraction: nil, used: "", freesUp: "no current data", isNearlyUsed: false
+                )
+            ])
+            #expect(try agent(report, .claudeCode, .today).limits.isEmpty)
+        }
     }
 
     // MARK: - Frame 4: every agent, today
