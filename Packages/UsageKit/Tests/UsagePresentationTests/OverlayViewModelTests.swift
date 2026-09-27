@@ -152,7 +152,7 @@ struct OverlayViewModelTests {
         let saved = Saved()
         let viewModel = OverlayViewModel(
             repository: repository, timeSource: FixedTime(now: repository.anchor), calendar: calendar,
-            stripOffset: -40, saveStripOffset: { saved.value = $0 }
+            stripOffset: -40, saveStripOffset: { saved.value = $0 }, stripHoverDelay: .milliseconds(20)
         )
         await viewModel.load()
         // It starts where it was left, and moves only once it has been picked up.
@@ -172,8 +172,12 @@ struct OverlayViewModelTests {
         viewModel.endStripDrag()
         #expect(viewModel.isDraggingStrip == false)
         #expect(saved.value == 300)
+        // Drag start cancels hover, so dropping keeps the rail compact until the count area
+        // receives a fresh, still-pointer dwell.
+        #expect(viewModel.strip?.isExpanded == false)
+        viewModel.pointerMovedOverCompactStrip()
+        try? await Task.sleep(for: .milliseconds(30))
         #expect(viewModel.strip?.isExpanded == true)
-        // Dropped with the pointer away from it, it goes back to the peek.
         viewModel.pointerOverStrip(false)
         #expect(viewModel.strip?.isExpanded == false)
     }
