@@ -7,22 +7,12 @@ import UsagePresentation
 /// still responds the moment it is pressed.
 private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    /// A transparent SwiftUI root must not consume a click when none of its visible children
-    /// owns that point. Returning nil lets AppKit continue looking beneath the overlay window.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let hit = super.hitTest(point)
-        return hit === self ? nil : hit
-    }
 }
 
 /// Puts the overlay on screen and wires the behaviour SwiftUI cannot do alone:
 /// closing on a click outside, closing on Esc, and following screen changes.
 @MainActor
 final class OverlayController {
-    /// Room for the expanded strip, the panel and the soft glass shadow.
-    private static let width = StripLayout.overlayWidth
-
     private let viewModel: OverlayViewModel
     private let launchState: LaunchState
     private let panel: OverlayPanel
@@ -54,6 +44,7 @@ final class OverlayController {
             MainActor.assumeIsolated { self?.position() }
         }
         watchOpenState()
+        watchOverlayBounds()
         // Before the first load, so a screenshot of a state does not wait for a month of
         // history to be read. The panel draws as soon as the first report arrives.
         applyLaunchState()
@@ -63,15 +54,36 @@ final class OverlayController {
         }
     }
 
-    /// Against the screen's right edge, over the full height below the menu bar,
-    /// so the strip touches the edge and centres vertically.
+    /// Against the screen's right edge, with only enough window width for the active glass.
+    /// Keeping the transparent window narrow leaves the rest of the desktop available to the
+    /// application behind it.
     private func position() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
+        let width = overlayWidth
         panel.setFrame(
-            NSRect(x: screen.frame.maxX - Self.width, y: visible.minY, width: Self.width, height: visible.height),
+            NSRect(x: screen.frame.maxX - width, y: visible.minY, width: width, height: visible.height),
             display: true
         )
+    }
+
+    private var overlayWidth: CGFloat {
+        if viewModel.isOpen { return StripLayout.overlayWidth }
+        return viewModel.isStripExpanded ? StripLayout.expandedOverlayWidth : StripLayout.restingOverlayWidth
+    }
+
+    /// Resizes the transparent window with the rail. The glass remains on the screen edge while
+    /// the exposed desktop space is never part of this panel's window bounds.
+    private func watchOverlayBounds() {
+        withObservationTracking {
+            _ = viewModel.isStripExpanded
+            _ = viewModel.isOpen
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.position()
+                self?.watchOverlayBounds()
+            }
+        }
     }
 
     /// While the panel is open, Esc and a click anywhere outside the overlay close it.

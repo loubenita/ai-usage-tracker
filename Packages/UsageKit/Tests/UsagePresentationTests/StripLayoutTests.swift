@@ -7,6 +7,8 @@ struct StripLayoutTests {
     @Test func theExpandedListStaysCompact() {
         #expect(StripLayout.expandedWidth == 236)
         #expect(StripLayout.restingWidth == 36)
+        #expect(StripLayout.restingOverlayWidth == 76)
+        #expect(StripLayout.expandedOverlayWidth == 276)
     }
 
     @Test func countsWholeItemsAfterThePaddingAndStopsAtThree() {

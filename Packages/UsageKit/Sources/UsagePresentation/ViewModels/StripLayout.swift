@@ -7,8 +7,14 @@ public enum StripLayout {
     public static let expandedWidth: CGFloat = 236
     public static let restingWidth: CGFloat = 36
     public static let panelWidth: CGFloat = 430
+    /// The inset at the screen edge and room for the soft glass shadow.
+    public static let overlayEdgeInset: CGFloat = 8
+    public static let overlayShadowMargin: CGFloat = 32
+    /// The transparent window is only as wide as its active glass state.
+    public static let restingOverlayWidth = restingWidth + overlayEdgeInset + overlayShadowMargin
+    public static let expandedOverlayWidth = expandedWidth + overlayEdgeInset + overlayShadowMargin
     /// Expanded strip + gap + panel + room for the soft glass shadow.
-    public static let overlayWidth: CGFloat = expandedWidth + 8 + panelWidth + 32
+    public static let overlayWidth: CGFloat = expandedWidth + overlayEdgeInset + panelWidth + overlayShadowMargin
 
     /// The resting strip shows up to this many sessions and counts the rest in "+N".
     public static let restLimit = 3
