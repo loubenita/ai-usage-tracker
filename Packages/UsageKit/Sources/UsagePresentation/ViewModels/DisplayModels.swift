@@ -34,7 +34,7 @@ public struct StripItemModel: Sendable, Equatable, Identifiable {
     /// The amber dot pulses until the item has been hovered once.
     public let pulses: Bool
     public let highlight: ItemHighlight
-    /// Rank by combined spend and context use; 0 is highest priority.
+    /// Known USD spend first, then context/activity for unpriced sessions; 0 is first.
     public let priority: Int
     public let accessibilityLabel: String
 }

@@ -8,23 +8,34 @@ struct StripLayoutTests {
     @Test func theExpandedListAndCompactTabStaySmall() {
         #expect(StripLayout.expandedWidth == 236)
         #expect(StripLayout.restingWidth == 36)
-        #expect(StripLayout.compactSessionLimit == 2)
-        #expect(StripLayout.compactHeight == 110)
-        #expect(StripLayout.compactHeight < 120)
+        #expect(StripLayout.compactSessionLimit == 4)
+        #expect(StripLayout.compactHeight == 166)
+        #expect(StripLayout.compactHeight < 180)
         #expect(StripLayout.restingOverlayWidth == 76)
         #expect(StripLayout.expandedOverlayWidth == 276)
         #expect(StripLayout.railTransitionDuration == 0.42)
         #expect(StripLayout.compactContentHeight(for: 0) == 24)
         #expect(StripLayout.compactContentHeight(for: 1) == 24)
         #expect(StripLayout.compactContentHeight(for: 2) == 52)
-        #expect(StripLayout.compactContentHeight(for: 3) == 72)
+        #expect(StripLayout.compactContentHeight(for: 3) == 80)
+        #expect(StripLayout.compactContentHeight(for: 4) == 108)
+        #expect(StripLayout.compactContentHeight(for: 5) == 128)
     }
 
-    @Test func compactTabUsesTheTwoHighestPrioritySessions() {
-        let items = [item(id: "third", priority: 2), item(id: "first", priority: 0), item(id: "second", priority: 1)]
+    @Test func compactTabUsesFourHighestPrioritySessionsAndCountsTheRest() {
+        let items = [item(id: "sixth", priority: 5), item(id: "third", priority: 2),
+                     item(id: "first", priority: 0), item(id: "fifth", priority: 4),
+                     item(id: "second", priority: 1), item(id: "fourth", priority: 3)]
 
-        #expect(StripLayout.compactItems(from: items).map(\.id) == ["first", "second"])
-        #expect(StripLayout.compactOverflowCount(for: items) == 1)
+        #expect(StripLayout.compactItems(from: items).map(\.id) == ["first", "second", "third", "fourth"])
+        #expect(StripLayout.compactOverflowCount(for: items) == 2)
+    }
+
+    @Test func compactHoverExcludesTheDragHandleAndIncludesTheFirstRing() {
+        #expect(!StripLayout.isCompactHoverTarget(y: 8))
+        #expect(!StripLayout.isCompactHoverTarget(y: 29))
+        #expect(StripLayout.isCompactHoverTarget(y: 30))
+        #expect(StripLayout.isCompactHoverTarget(y: StripLayout.compactHeight - 8))
     }
 
     // MARK: - Dragging
