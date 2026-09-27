@@ -1,51 +1,49 @@
 import CoreGraphics
 
-/// At rest, show up to three sessions ranked by spend and context use, within screen height.
+/// A compact edge tab grows into the session list while keeping its placement on screen.
 public enum StripLayout {
     /// The expanded strip is a compact provider mark, task and context ring. Session and usage
     /// panels keep the wider reading column beside it.
     public static let expandedWidth: CGFloat = 236
-    public static let restingWidth: CGFloat = 64
+    public static let restingWidth: CGFloat = 36
     public static let panelWidth: CGFloat = 430
+    /// The inset at the screen edge and room for the soft glass shadow.
+    public static let overlayEdgeInset: CGFloat = 8
+    public static let overlayShadowMargin: CGFloat = 32
+    /// The transparent window is only as wide as its active glass state.
+    public static let restingOverlayWidth = restingWidth + overlayEdgeInset + overlayShadowMargin
+    public static let expandedOverlayWidth = expandedWidth + overlayEdgeInset + overlayShadowMargin
     /// Expanded strip + gap + panel + room for the soft glass shadow.
-    public static let overlayWidth: CGFloat = expandedWidth + 8 + panelWidth + 32
-
-    /// The resting strip shows up to this many sessions and counts the rest in "+N".
-    public static let restLimit = 3
-
-    /// Inset rail: a visible handle, then a complete 36pt ring and compact time every 60pt.
-    static let restPadding: CGFloat = 8 * 2 + handleBand + 4
-    static let restItemPitch: CGFloat = 50 + 10
-    static let restItemHeight: CGFloat = 50
-    /// The "+N" band across the foot of the strip, and the gap above it.
-    static let restChipHeight: CGFloat = 26
-    static let restChipGap: CGFloat = 10
-    static let restChip: CGFloat = restChipHeight + restChipGap
-
-    /// Sessions that fit on the resting rail in `height`, and never more than `restLimit`. The
-    /// "+N" chip is a small chip rather than an item, so it takes no session's place; it does
-    /// take its own room, so `showingChip` leaves it.
-    public static func restCapacity(height: CGFloat, showingChip: Bool = false) -> Int {
-        let forItems = height - restPadding - (showingChip ? restChip : 0)
-        guard forItems >= restItemHeight else { return 1 }
-        return min(Int((forItems - restItemHeight) / restItemPitch) + 1, restLimit)
-    }
-
-    /// Which sessions to draw: as many as there is room for, and a "+N" chip counting the rest.
-    public static func visible(count: Int, capacity: Int) -> (shown: Int, hidden: Int) {
-        let shown = min(count, capacity)
-        return (shown, count - shown)
-    }
+    public static let overlayWidth: CGFloat = expandedWidth + overlayEdgeInset + panelWidth + overlayShadowMargin
 
     // MARK: - Dragging the strip
 
     /// The pointer moves this far with the button down before the strip is picked up. Until
     /// then nothing changes, so a click on the handle leaves the strip as it was.
     public static let dragThreshold: CGFloat = 4
-    /// The handle remains visible at rest, so moving the rail does not require discovering hover.
-    public static let handleBand: CGFloat = 24
-    public static let handleHitWidth: CGFloat = 56
-    public static let handleMarkWidth: CGFloat = 28
+    /// The compact rail shows a handle and the two highest-priority session context rings.
+    public static let handleBand: CGFloat = 16
+    public static let handleHitWidth: CGFloat = restingWidth
+    public static let handleMarkWidth: CGFloat = 14
+    public static let compactSessionLimit = 2
+    public static let compactRingBand: CGFloat = 24
+    public static let compactRingSpacing: CGFloat = 4
+    public static let compactVerticalInset: CGFloat = 8
+    /// Maximum height when both compact indicators are present; a single session is shorter.
+    public static let compactHeight = handleBand
+        + CGFloat(compactSessionLimit) * compactRingBand
+        + CGFloat(compactSessionLimit - 1) * compactRingSpacing
+        + 2 * compactVerticalInset
+    /// The compact tab exposes the sessions with the highest presenter priority first.
+    static func compactItems(from items: [StripItemModel]) -> [StripItemModel] {
+        Array(items.sorted { $0.priority < $1.priority }.prefix(compactSessionLimit))
+    }
+
+    /// An empty tab still reserves one band for its usage affordance.
+    static func compactContentHeight(for sessionCount: Int) -> CGFloat {
+        let indicators = min(max(sessionCount, 1), compactSessionLimit)
+        return CGFloat(indicators) * compactRingBand + CGFloat(indicators - 1) * compactRingSpacing
+    }
     /// The screenshot-only drag state starts before SwiftUI has measured the resting strip.
     /// This keeps a representative 240pt expanded strip visibly above centre even then.
     public static let forcedDragOffset: CGFloat = -240
@@ -54,6 +52,13 @@ public enum StripLayout {
     /// moved, kept inside `limit` so the strip cannot be dragged off the screen.
     public static func dragged(logicalOrigin: CGFloat, by movement: CGFloat, limit: CGFloat) -> CGFloat {
         min(max(logicalOrigin + movement, -limit), limit)
+    }
+
+    /// A drag begins at the rail's displayed centre. The expanded rail may have shifted from
+    /// its saved resting offset to stay on screen, so restarting at that saved offset would
+    /// make it jump when it becomes compact.
+    public static func dragOrigin(for placement: Placement) -> CGFloat {
+        placement.offset
     }
 
     /// Where something of `height` sits on the edge, and whether it has to scroll.

@@ -15,7 +15,11 @@ let package = Package(
         .target(name: "UsageDomain"),
         // SQLite ships with macOS; Cursor keeps its chats in SQLite databases.
         .target(name: "UsageData", dependencies: ["UsageDomain"], linkerSettings: [.linkedLibrary("sqlite3")]),
-        .target(name: "UsagePresentation", dependencies: ["UsageDomain"]),
+        .target(
+            name: "UsagePresentation",
+            dependencies: ["UsageDomain"],
+            resources: [.process("Resources")]
+        ),
         .testTarget(name: "UsageDomainTests", dependencies: ["UsageDomain"]),
         .testTarget(
             name: "UsageDataTests",

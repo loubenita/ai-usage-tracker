@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import UsageDomain
@@ -48,6 +49,8 @@ public final class OverlayViewModel {
     @ObservationIgnored private let saveStripOffset: (@MainActor (CGFloat) -> Void)?
     private let reloadInterval: Int
     private let totalsInterval: Int
+    private let stripHoverDelay: Duration
+    @ObservationIgnored private let stripHoverSleeper: @Sendable (Duration) async -> Bool
     static let pendingTotalsInterval = 10
     /// The open sessions, as last read.
     @ObservationIgnored private var sessions: UsageRecords?
@@ -56,6 +59,8 @@ public final class OverlayViewModel {
     @ObservationIgnored private var generate: GenerateUsageReport?
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var totalsTask: Task<Void, Never>?
+    @ObservationIgnored private var stripHoverTask: Task<Void, Never>?
+    @ObservationIgnored private var stripHoverOrigin: CGPoint?
     /// How many times the totals were built: the tests count them.
     @ObservationIgnored private(set) var totalsBuilds = 0
     /// When the totals are next rebuilt on their own; the overview counts down to it.
@@ -72,6 +77,8 @@ public final class OverlayViewModel {
         calendar: Calendar,
         reloadInterval: Int = OverlayViewModel.defaultReloadInterval,
         totalsInterval: Int = 600,
+        stripHoverDelay: Duration = .seconds(1),
+        stripHoverSleeper: (@Sendable (Duration) async -> Bool)? = nil,
         opener: (any SessionOpening)? = nil,
         stripOffset: CGFloat = 0,
         saveStripOffset: (@MainActor (CGFloat) -> Void)? = nil
@@ -84,6 +91,8 @@ public final class OverlayViewModel {
         self.calendar = calendar
         self.reloadInterval = max(reloadInterval, 1)
         self.totalsInterval = max(totalsInterval, 1)
+        self.stripHoverDelay = stripHoverDelay
+        self.stripHoverSleeper = stripHoverSleeper ?? Self.sleepForStripHover
         let formatter = UsageFormatter(calendar: calendar)
         self.presenter = OverlayPresenter(formatter: formatter)
         self.usagePresenter = UsagePanelPresenter(formatter: formatter)
@@ -205,9 +214,45 @@ public final class OverlayViewModel {
 
     // MARK: - Intents
 
-    /// The pointer entering or leaving the strip grows or shrinks it.
+    /// Sets the strip's hover state immediately for screenshot launches and direct state changes.
     public func pointerOverStrip(_ inside: Bool) {
+        stripHoverTask?.cancel()
+        stripHoverTask = nil
+        stripHoverOrigin = nil
         isPointerOverStrip = inside
+    }
+
+    /// Compact content opens only after the pointer has been still over it for one second.
+    /// Only an identical repeated hover event leaves the dwell intact; the handle never calls this intent.
+    public func pointerMovedOverCompactStrip(at location: CGPoint = .zero) {
+        guard !isDraggingStrip, !isPointerOverStrip else { return }
+        if stripHoverOrigin == location { return }
+        stripHoverTask?.cancel()
+        stripHoverOrigin = location
+        let delay = stripHoverDelay
+        stripHoverTask = Task { [weak self] in
+            guard await self?.stripHoverSleeper(delay) == true, !Task.isCancelled else { return }
+            self?.isPointerOverStrip = true
+            self?.stripHoverTask = nil
+            self?.stripHoverOrigin = nil
+        }
+    }
+
+    private static func sleepForStripHover(_ delay: Duration) async -> Bool {
+        do {
+            try await Task.sleep(for: delay)
+            return !Task.isCancelled
+        } catch {
+            return false
+        }
+    }
+
+    /// Leaving the compact content cancels a pending expansion and restores the slim rail.
+    public func pointerLeftStrip() {
+        stripHoverTask?.cancel()
+        stripHoverTask = nil
+        stripHoverOrigin = nil
+        isPointerOverStrip = false
     }
 
     /// Hovering an item highlights it and stops its "needs you" dot pulsing.
@@ -262,6 +307,7 @@ public final class OverlayViewModel {
     /// Dragging the visible handle picks the strip up; it then follows the pointer up and down
     /// the screen's edge, and stays where it is dropped.
     public func beginStripDrag() {
+        pointerLeftStrip()
         isDraggingStrip = true
     }
 

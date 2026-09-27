@@ -9,7 +9,8 @@ struct StripView: View {
     let dragOrigin: CGFloat
     let isDragging: Bool
     let restHeight: CGFloat
-    let onPointer: (_ inside: Bool) -> Void
+    let onPointerMoved: (CGPoint) -> Void
+    let onPointerLeft: () -> Void
     let onHover: (_ sessionID: String, _ inside: Bool) -> Void
     let onClick: (String) -> Void
     let onUsage: () -> Void
@@ -22,27 +23,32 @@ struct StripView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            handle
-            Group {
+            if !model.isExpanded {
+                handle
+            }
+            VStack(spacing: 0) {
                 if model.isExpanded {
                     ExpandedContents(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage)
+                        .transition(.opacity)
                 } else {
-                    RestingContents(
-                        model: model,
-                        capacity: StripLayout.restCapacity(
-                            height: availableHeight,
-                            showingChip: model.items.count > StripLayout.restLimit
-                        )
-                    )
+                    RestingContents(model: model, onUsage: onUsage)
+                        .transition(.opacity)
+                }
+            }
+            // The handle is deliberately outside this dwell target, so placing the pointer over
+            // the drag affordance cannot open a resting rail.
+            .contentShape(.rect)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location): onPointerMoved(location)
+                case .ended: onPointerLeft()
                 }
             }
         }
         .frame(width: model.isExpanded ? StripLayout.expandedWidth : StripLayout.restingWidth)
-        .padding(.vertical, 8)
+        .padding(.vertical, StripLayout.compactVerticalInset)
         .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.stripRadius))
-        .contentShape(.rect)
         .offset(y: offset)
-        .onHover(perform: onPointer)
         .animation(transitionAnimation, value: model.isExpanded)
         .animation(transitionAnimation, value: offset)
     }
@@ -70,7 +76,9 @@ struct StripView: View {
     private var dragLimit: CGFloat { max((availableHeight - restHeight) / 2, 0) }
 
     private var drag: some Gesture {
-        DragGesture(minimumDistance: StripLayout.dragThreshold, coordinateSpace: .local)
+        // Global coordinates stay fixed as the rail moves. Local coordinates move with this
+        // view, feeding its offset back into translation and making a vertical drag bounce.
+        DragGesture(minimumDistance: StripLayout.dragThreshold, coordinateSpace: .global)
             .onChanged { value in
                 if start == nil {
                     start = dragOrigin
@@ -89,39 +97,58 @@ struct StripView: View {
 
 private struct RestingContents: View {
     let model: StripModel
-    let capacity: Int
+    let onUsage: () -> Void
 
     var body: some View {
-        let ranked = model.items.sorted { $0.priority < $1.priority }
-        let visible = StripLayout.visible(count: ranked.count, capacity: capacity)
-        VStack(spacing: 10) {
-            ForEach(ranked.prefix(visible.shown)) { item in
-                VStack(spacing: 2) {
-                    SessionRing(model: item.ring)
-                        .overlay(alignment: .topTrailing) {
-                            if item.needsUser { NeedsYouDot(pulses: item.pulses, diameter: 8).offset(x: 1, y: -1) }
-                        }
-                    Text(item.time)
-                        .font(TypeScale.font(10, .semibold))
-                        .foregroundStyle(Theme.timer)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .staticDigits()
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(item.accessibilityLabel)
+        VStack(spacing: StripLayout.compactRingSpacing) {
+            ForEach(StripLayout.compactItems(from: model.items)) { item in
+                CompactContextIndicator(ring: item.ring, needsUser: item.needsUser, pulses: item.pulses)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(item.accessibilityLabel)
             }
-            if visible.hidden > 0 {
-                Text("+\(visible.hidden)")
-                    .font(TypeScale.font(TypeScale.caption, .semibold))
-                    .foregroundStyle(Theme.primary)
-                    .frame(width: 36, height: StripLayout.restChipHeight)
-                    .background(Capsule().fill(Theme.lift(0.16)))
-                    .accessibilityLabel("\(visible.hidden) more sessions")
+            if model.items.isEmpty {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.secondary)
+                    .frame(width: StripLayout.compactRingBand, height: StripLayout.compactRingBand)
+                    .contentShape(.rect)
+                    .onTapGesture(perform: onUsage)
+                    .help("Open usage")
+                    .accessibilityLabel("No active sessions. Open usage")
+                    .accessibilityAddTraits(.isButton)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 4)
+        .frame(height: StripLayout.compactContentHeight(for: model.items.count))
+    }
+}
+
+/// The resting tab needs a readable provider cue and context state, without the expanded rail's
+/// tiny token label. Its arc uses the same threshold colour as a full session ring.
+private struct CompactContextIndicator: View {
+    let ring: RingModel
+    let needsUser: Bool
+    let pulses: Bool
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Theme.track, lineWidth: 2.5)
+            Circle()
+                .trim(from: 0, to: ring.fraction)
+                .stroke(
+                    ring.isNearlyFull ? Theme.red : Theme.ringColor(ring.agent),
+                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+            AgentMark(agent: ring.agent)
+                .scaleEffect(0.65)
+                .frame(width: 16, height: 16)
+        }
+        .frame(width: StripLayout.compactRingBand, height: StripLayout.compactRingBand)
+        .overlay(alignment: .topTrailing) {
+            if needsUser {
+                NeedsYouDot(pulses: pulses, diameter: 7).offset(x: 1, y: -1)
+            }
+        }
     }
 }
 
@@ -157,38 +184,35 @@ private struct StripItemView: View {
     let item: StripItemModel
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             AgentMark(agent: item.ring.agent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(TypeScale.font(TypeScale.body, .semibold))
                     .foregroundStyle(Theme.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(context)
+                    .font(TypeScale.font(TypeScale.caption, .medium))
+                    .foregroundStyle(Theme.timer)
+                    // The project and branch share this two-line budget. A long branch cannot
+                    // grow a row by taking a third line below its project.
                     .lineLimit(2)
-                Text(item.project)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 3) {
+                SessionRing(model: item.ring)
+                    .overlay(alignment: .topTrailing) {
+                        if item.needsUser { NeedsYouDot(pulses: item.pulses).offset(x: -1, y: 1) }
+                    }
+                Text(item.time)
                     .font(TypeScale.font(TypeScale.caption, .medium))
                     .foregroundStyle(Theme.timer)
                     .lineLimit(1)
-                HStack(spacing: 4) {
-                    if let branch = item.branch {
-                        Text(branch)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.78)
-                        Spacer(minLength: 2)
-                    } else {
-                        Spacer(minLength: 0)
-                    }
-                    Text(item.time)
-                        .fixedSize()
-                }
-                .font(TypeScale.font(TypeScale.caption, .medium))
-                .foregroundStyle(Theme.timer)
-                .staticDigits()
+                    .fixedSize()
+                    .staticDigits()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            SessionRing(model: item.ring)
-                .overlay(alignment: .topTrailing) {
-                    if item.needsUser { NeedsYouDot(pulses: item.pulses).offset(x: -1, y: 1) }
-                }
+            .frame(width: 40)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -206,6 +230,10 @@ private struct StripItemView: View {
         case .hovered: Theme.lift(0.16)
         case .selected: Theme.lift(0.28)
         }
+    }
+
+    private var context: String {
+        [item.project, item.branch].compactMap { $0 }.joined(separator: "\n")
     }
 
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UsageDomain
 
 /// The context ring with the current context used inside: "68k".
@@ -69,38 +70,77 @@ struct AgentDot: View {
     }
 }
 
-/// A compact provider mark whose symbol, silhouette and colour remain distinct when the name
-/// is hidden from the strip. VoiceOver still reads the provider name.
+/// A compact, bundled provider mark. Bundling avoids depending on the network while the strip
+/// is open, and the source files retain each provider's recognisable silhouette at 24pt.
 struct AgentMark: View {
     let agent: Agent
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(Theme.agent(agent))
-            .frame(width: 24, height: 24)
-            .background(background)
+        Group {
+            if let image = AgentMarkAsset.image(for: agent, colorScheme: colorScheme) {
+                if AgentMarkAsset.isTemplate(agent) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .renderingMode(.template)
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundStyle(Theme.agent(agent))
+                } else {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                }
+            } else {
+                Image(systemName: "questionmark.square.dashed")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.agent(agent))
+            }
+        }
+        .frame(width: 24, height: 24)
             .accessibilityLabel(agent.displayName)
     }
+}
 
-    @ViewBuilder private var background: some View {
+/// Resource lookup stays separate from the SwiftUI view so resource coverage can be tested.
+enum AgentMarkAsset {
+    static func resourceURL(for agent: Agent, colorScheme: ColorScheme) -> URL? {
+        Bundle.module.url(
+            forResource: resourceName(for: agent, colorScheme: colorScheme),
+            withExtension: resourceExtension(for: agent)
+        )
+    }
+
+    static func image(for agent: Agent, colorScheme: ColorScheme) -> NSImage? {
+        guard let url = resourceURL(for: agent, colorScheme: colorScheme) else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    /// These supplied vectors are monochrome, so they use the existing provider colours to
+    /// remain distinct on both overlay appearances.
+    static func isTemplate(_ agent: Agent) -> Bool {
         switch agent {
-        case .claudeCode, .cursor, .antigravity:
-            Circle().fill(Theme.agent(agent).opacity(0.14))
-        case .codex, .kiro, .opencode:
-            RoundedRectangle(cornerRadius: agent == .codex ? 7 : 5)
-                .fill(Theme.agent(agent).opacity(0.14))
+        case .claudeCode, .cursor: true
+        case .codex, .kiro, .antigravity, .opencode: false
         }
     }
 
-    private var symbol: String {
+    static func resourceName(for agent: Agent, colorScheme: ColorScheme) -> String {
         switch agent {
-        case .claudeCode: "sparkles"
-        case .codex: "terminal"
-        case .cursor: "cursorarrow.rays"
-        case .kiro: "k.square.fill"
-        case .antigravity: "atom"
-        case .opencode: "chevron.left.forwardslash.chevron.right"
+        case .claudeCode: "claude"
+        case .codex: "codex"
+        case .cursor: colorScheme == .dark ? "cursor-dark" : "cursor-light"
+        case .kiro: "kiro"
+        case .antigravity: "antigravity"
+        case .opencode: "opencode"
+        }
+    }
+
+    static func resourceExtension(for agent: Agent) -> String {
+        switch agent {
+        case .codex, .kiro, .antigravity: "png"
+        case .claudeCode, .cursor, .opencode: "svg"
         }
     }
 }
