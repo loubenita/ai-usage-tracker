@@ -113,52 +113,21 @@ struct PanelView: View {
     }
 }
 
-/// The session's sub-agents, with their aggregate followed by tokens, cost and time per run.
+/// One compact aggregate for all sub-agent runs. Their detail is already included in the
+/// session totals, so repeating a card for each run makes the panel harder to scan.
 private struct SubagentsView: View {
     let model: SubagentsModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             CapsHeader(title: model.title, trailing: model.share)
-            Text(model.inclusion)
-                .font(TypeScale.font(TypeScale.secondary, .medium))
-                .foregroundStyle(Theme.primary)
             HStack {
-                Text("All runs").foregroundStyle(Theme.secondary)
+                Text(model.inclusion).foregroundStyle(Theme.secondary)
                 Spacer(minLength: 8)
                 Text(model.total).foregroundStyle(Theme.primary)
             }
             .font(TypeScale.secondaryFont)
             .staticDigits()
-            ForEach(model.rows) { row in
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(row.model)
-                            .font(TypeScale.font(TypeScale.body, .semibold))
-                            .foregroundStyle(Theme.name)
-                        Spacer(minLength: 8)
-                        Text(row.run)
-                            .font(TypeScale.captionFont)
-                            .foregroundStyle(Theme.secondary)
-                    }
-                    HStack(spacing: 20) {
-                        if let tokens = row.tokens { metric("Tokens", tokens) }
-                        if let cost = row.cost { metric("Cost", cost) }
-                        metric("Time", row.time)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.lift(0.08)))
-                .help("Sub-agent \(row.id)")
-            }
-        }
-    }
-
-    private func metric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(TypeScale.captionFont).foregroundStyle(Theme.label)
-            Text(value).font(TypeScale.secondaryFont).foregroundStyle(Theme.primary).staticDigits()
         }
     }
 }

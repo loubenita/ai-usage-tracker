@@ -125,7 +125,7 @@ private struct AllAgentsView: View {
             if !model.whereRows.isEmpty {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("WHERE THE TIME WENT").capsLabel()
-                    ForEach(model.whereRows) { TimeRow(model: $0, labelWidth: 180) }
+                    ForEach(model.whereRows) { TimeRow(model: $0) }
                 }
                 .sectionDivider()
             }
@@ -138,27 +138,30 @@ private struct LimitListRow: View {
     let model: LimitListRowModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            AgentDot(agent: model.agent)
-            Text(model.name)
-                .font(TypeScale.secondaryFont)
-                .foregroundStyle(Theme.name)
-                .lineLimit(1)
-                .frame(width: 96, alignment: .leading)
-            if let fraction = model.fraction {
-                ProgressBar(fraction: fraction, height: 4, fill: model.isNearlyUsed ? Theme.amber : Theme.primary)
-                    .frame(width: 76)
-                Text(model.used)
-                    .font(TypeScale.font(TypeScale.secondary, model.isNearlyUsed ? .semibold : .regular))
-                    .foregroundStyle(model.isNearlyUsed ? Theme.amber : Theme.primary)
-                    .frame(width: 30, alignment: .trailing)
-                Text(model.freesUp)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                AgentDot(agent: model.agent)
+                Text(model.name)
                     .font(TypeScale.secondaryFont)
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.name)
                     .lineLimit(1)
-                    .frame(width: 46, alignment: .trailing)
+                    .minimumScaleFactor(0.82)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let fraction = model.fraction {
+                HStack(spacing: 8) {
+                    ProgressBar(fraction: fraction, height: 4, fill: model.isNearlyUsed ? Theme.amber : Theme.primary)
+                    Text(model.used)
+                        .font(TypeScale.font(TypeScale.secondary, model.isNearlyUsed ? .semibold : .regular))
+                        .foregroundStyle(model.isNearlyUsed ? Theme.amber : Theme.primary)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: 34, alignment: .trailing)
+                    Text(model.freesUp)
+                        .font(TypeScale.secondaryFont)
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
             } else {
-                Spacer(minLength: 0)
                 Text(model.freesUp).font(TypeScale.secondaryFont).foregroundStyle(Theme.faint)
             }
         }
@@ -221,7 +224,6 @@ private struct AgentTable: View {
 /// "● MS · Video generation  50%  2h 58m".
 private struct TimeRow: View {
     let model: TimeRowModel
-    let labelWidth: CGFloat
     var showsPercent = true
 
     var body: some View {
@@ -236,7 +238,8 @@ private struct TimeRow: View {
                 .font(TypeScale.secondaryFont)
                 .foregroundStyle(Theme.name)
                 .lineLimit(1)
-                .frame(maxWidth: showsPercent ? labelWidth : .infinity, alignment: .leading)
+                .minimumScaleFactor(0.78)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if showsPercent {
                 Text(model.percent ?? "").font(TypeScale.secondaryFont).foregroundStyle(Theme.primary)
                     .frame(width: 32, alignment: .trailing)
@@ -318,7 +321,7 @@ private struct AgentUsageView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("WHERE THE TIME WENT").capsLabel().lineLimit(1)
                     ForEach(model.whereRows) { row in
-                        TimeRow(model: row, labelWidth: 180, showsPercent: model.models.isEmpty)
+                        TimeRow(model: row, showsPercent: model.models.isEmpty)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
