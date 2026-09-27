@@ -18,7 +18,7 @@ public final class OverlayViewModel {
     public private(set) var report: UsageReport?
     public private(set) var hoveredSessionID: String?
     public private(set) var openSessionID: String?
-    /// Whether the pointer is over the strip, which grows it from the half strip to the full one.
+    /// Whether the pointer is over the rail, which widens it to show session details.
     public private(set) var isPointerOverStrip = false
     /// Whether the usage button's panel is open. It shows every agent, so no session is selected.
     public private(set) var isOverviewOpen = false

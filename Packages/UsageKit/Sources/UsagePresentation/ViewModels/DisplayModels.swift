@@ -41,8 +41,7 @@ public struct StripItemModel: Sendable, Equatable, Identifiable {
 
 public struct StripModel: Sendable, Equatable {
     public let items: [StripItemModel]
-    /// The full strip shows while the pointer is over it or a panel is open;
-    /// otherwise only the half strip on the screen edge shows.
+    /// The rail widens while the pointer is over it or a panel is open.
     public let isExpanded: Bool
 }
 

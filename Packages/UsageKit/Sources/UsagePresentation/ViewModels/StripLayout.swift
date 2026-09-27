@@ -22,7 +22,7 @@ public enum StripLayout {
     static let restChipGap: CGFloat = 10
     static let restChip: CGFloat = restChipHeight + restChipGap
 
-    /// Sessions that fit on the half strip in `height`, and never more than `restLimit`. The
+    /// Sessions that fit on the resting rail in `height`, and never more than `restLimit`. The
     /// "+N" chip is a small chip rather than an item, so it takes no session's place; it does
     /// take its own room, so `showingChip` leaves it.
     public static func restCapacity(height: CGFloat, showingChip: Bool = false) -> Int {

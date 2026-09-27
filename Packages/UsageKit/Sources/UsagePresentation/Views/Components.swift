@@ -33,7 +33,7 @@ struct SessionRing: View {
 /// stays solid when Reduce Motion is on.
 struct NeedsYouDot: View {
     let pulses: Bool
-    /// 9pt on the full strip, 8pt on the half strip.
+    /// 9pt on the expanded rail, 8pt at rest.
     var diameter: CGFloat = 9
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dimmed = false
