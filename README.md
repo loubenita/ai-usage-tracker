@@ -29,7 +29,7 @@ To quit the app, right-click the strip or a panel and choose **Quit**.
 
 ### The strip
 
-At rest a rounded glass rail sits just inside the screen's right edge. It shows up to three sessions ranked by spend and context use, with a "+N" count for the rest. Move the pointer over it and the same rail widens into a list. Each row shows the agent, task, project and branch when known, active time, and context ring. Full facts stay in the selected session's panel.
+At rest a rounded glass rail sits just inside the screen's right edge. It shows up to four sessions ranked by known spend, then context use and recent activity, with a "+N" count for the rest. Hold the pointer over it for about three seconds and the rail widens into a list. Each row shows the agent, task, project and branch when known, active time, and context ring. Full facts stay in the selected session's panel.
 
 - Each ring fills as that session's context fills, turns red when it is nearly full, and carries its agent's colour.
 - Inside the ring is the current context in use: the number and the fill describe the same reading. Cumulative session tokens stay in the session panel.
@@ -40,7 +40,7 @@ At rest a rounded glass rail sits just inside the screen's right edge. It shows 
 
 Click a ring.
 
-It shows only the selected session, including its account when the agent exposes one: what it is doing and where it runs, total spend and tokens, active time and turns, and context with when it will be full at this pace. **Show details** reveals readable token categories, pace, model, branch and first ask. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. Sessions that started sub-agents show their run count, combined tokens, cost, working time and share of session spend in one summary. These runs are already included in the session totals.
+It shows only the selected session, including a named Claude account when one is known: what it is doing and where it runs, available spend or credits and tokens, active time and turns, and context with when it may be full at this pace. **Show details** reveals readable token categories, model and effort, pace, first ask, tool and file activity, and location. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. Sessions that started sub-agents show their run count, combined tokens, cost, working time and share of session spend in one summary. These runs are already included in the session totals.
 
 **Open** selects the existing tab and session in Terminal or iTerm by its TTY. For tmux, it selects the session's pane in an attached tmux client and brings the host terminal forward. Warp and Ghostty sessions say **Bring forward**: the app can raise those terminals, but cannot select an exact tab there. This also limits which Warp tab becomes visible for a tmux session. The app never types into a terminal. Its action and observed result are written to `~/Library/Application Support/AIUsageTracker/open.log`.
 
@@ -48,7 +48,7 @@ It shows only the selected session, including its account when the agent exposes
 
 The button under the strip opens the usage panel: every agent, or one, across Today, Week and Month.
 
-It opens by naming what runs out first — "Codex runs out first: 5% of its week is left until Thu 06:57" — then lists every limit each agent shares, with how much is used and when it frees up, amber at 85%. Under that: time, tokens and spend for each agent, and where the time went. Picking one agent shows its limits and pace, its numbers, a chart of the period, its models and its work.
+It opens by naming what runs out first — "Codex runs out first: 5% of its week is left until Thu 06:57" — then lists available limits by provider and Claude account. Each reading has its window, used share, progress bar, and a reset time when the source supplies one. Old account readings are labelled instead of shown as current. Bars turn amber at 85%. Under that: time, tokens and spend for each agent, and where the time went. Picking one agent shows its limits and pace, its numbers, a chart of the period, its models and its work. Today omits weekly limits.
 
 Anything an agent does not report is left out rather than shown as zero; in the table, where the column has to stay for the others, the cell says "n/a".
 
@@ -64,17 +64,17 @@ Claude Code keeps its plan limits out of its transcripts, but hands them to the 
 
 For multiple Claude accounts, set this status line in each account's `settings.json` under its `CLAUDE_CONFIG_DIR`. The tracker reads each profile's sessions separately and shows each account's limits separately. Set `AIUT_ACCOUNT_NAME` for a readable account label if the directory name is unclear. If the existing `account-usage.py` status line is installed, the tracker also reads its per-account percentage cache; it shows those percentages without inventing reset times.
 
-Until then Claude's row says "no data". No login, token or Keychain item is involved anywhere in the app. If you already have a status line, set `AIUT_STATUSLINE_NEXT` to its command and the script prints that instead of its own.
+Until then Usage explains how to turn on Claude limits and leaves out empty limit bars. No login, token or Keychain item is involved anywhere in the app. If you already have a status line, set `AIUT_STATUSLINE_NEXT` to its command and the script prints that instead of its own.
 
 ## What each agent gives
 
 | | Claude Code | Codex | Cursor Agent | Kiro CLI | Antigravity |
 |---|---|---|---|---|---|
-| Ring colour | The text colour | Light grey | Blue | Violet | Green, for when it is supported |
+| Ring colour | The text colour | Light grey | Blue | Violet | Unavailable today |
 | Context and tokens | Yes | Yes | Context only: Cursor keeps no token count | Yes, except its Auto agent | No: its conversations are encrypted |
 | Cost | Yes, at API list prices | No prices available | Billed by plan | Billed in credits | No |
-| Plan limits | 5-hour and weekly, [with the status line](#claudes-limits) | Weekly, from its own files | No | This month's credits, by asking `kiro-cli` | No |
-| Counted in Today, Week and Month | Yes, sub-agents included | Yes | Time and prompts only | Yes, in credits | No |
+| Plan limits | 5-hour and weekly, [with the status line](#claudes-limits) | 5-hour and weekly when present in its own files | No | This month's credits, by asking `kiro-cli` | No |
+| Counted in Today, Week and Month | Yes, sub-agents included | Yes | No history; live context and prompts only | Yes, in credits | No |
 
 Antigravity runs as a desktop app rather than in a terminal and encrypts what it saves, so it cannot be tracked. Kiro's reader is written from other tools' descriptions of Kiro and has not been tried on a real Kiro session.
 

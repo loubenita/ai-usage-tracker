@@ -1,8 +1,7 @@
 import SwiftUI
 import UsageDomain
 
-/// The usage button's shared-width panel, as Paper frames 4 to 6 draw it: an agent picker, the
-/// period tabs with the refresh countdown, then every agent together or one on its own.
+/// The usage button's shared-width panel: an agent picker, period tabs and a scoped summary.
 struct UsagePanelView: View {
     let model: UsagePanelModel
     let onSelectAgent: (AgentFilter) -> Void
@@ -113,7 +112,7 @@ private struct AllAgentsView: View {
                     }
                     if !model.limits.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            CapsHeader(title: "LIMITS", trailing: "used · frees up")
+                            CapsHeader(title: "PLAN LIMITS")
                             ForEach(model.limits) { LimitListRow(model: $0) }
                         }
                     }
@@ -133,39 +132,36 @@ private struct AllAgentsView: View {
     }
 }
 
-/// "● Claude 5-hour  [bar]  62%  16:40", in fixed lanes so the rows line up.
+/// Account and window above a full-width bar; reset details have their own readable line.
 private struct LimitListRow: View {
     let model: LimitListRowModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 AgentDot(agent: model.agent)
                 Text(model.name)
-                    .font(TypeScale.secondaryFont)
-                    .foregroundStyle(Theme.name)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                    .font(TypeScale.font(TypeScale.secondary, .medium))
+                    .foregroundStyle(Theme.primary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if model.fraction != nil {
+                    Text(model.used)
+                        .font(TypeScale.font(TypeScale.body, .semibold))
+                        .foregroundStyle(model.isNearlyUsed ? Theme.amber : Theme.primary)
+                        .fixedSize()
+                }
             }
             if let fraction = model.fraction {
-                HStack(spacing: 8) {
-                    ProgressBar(fraction: fraction, height: 4, fill: model.isNearlyUsed ? Theme.amber : Theme.primary)
-                    Text(model.used)
-                        .font(TypeScale.font(TypeScale.secondary, model.isNearlyUsed ? .semibold : .regular))
-                        .foregroundStyle(model.isNearlyUsed ? Theme.amber : Theme.primary)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .frame(width: 34, alignment: .trailing)
-                    Text(model.freesUp)
-                        .font(TypeScale.secondaryFont)
-                        .foregroundStyle(Theme.secondary)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            } else {
-                Text(model.freesUp).font(TypeScale.secondaryFont).foregroundStyle(Theme.faint)
+                ProgressBar(fraction: fraction, height: 5, fill: model.isNearlyUsed ? Theme.amber : Theme.agent(model.agent))
             }
+            Text(model.freesUp)
+                .font(TypeScale.captionFont)
+                .foregroundStyle(model.fraction == nil ? Theme.faint : Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .staticDigits()
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -282,7 +278,7 @@ private struct AgentUsageView: View {
             if !model.limits.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(model.limits.indices, id: \.self) { index in
-                        BarRow(model: model.limits[index], agent: model.agent, isLimit: true)
+                        AgentLimitRow(model: model.limits[index], agent: model.agent)
                     }
                 }
             }
@@ -331,6 +327,37 @@ private struct AgentUsageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+}
+
+/// A limit keeps its reset and forecast below the bar so longer account names never squeeze them.
+private struct AgentLimitRow: View {
+    let model: BarRowModel
+    let agent: Agent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(model.title)
+                .font(TypeScale.font(TypeScale.body, .semibold))
+                .foregroundStyle(Theme.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            ProgressBar(
+                fraction: model.fraction, height: 6,
+                fill: model.isNearlyUsed ? Theme.amber : Theme.agent(agent)
+            )
+            Text(model.detail)
+                .font(TypeScale.secondaryFont)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let note = model.note {
+                Text(note)
+                    .font(TypeScale.secondaryFont)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .staticDigits()
+        .accessibilityElement(children: .combine)
     }
 }
 

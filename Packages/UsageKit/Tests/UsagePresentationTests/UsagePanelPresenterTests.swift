@@ -85,13 +85,13 @@ struct UsagePanelPresenterTests {
         let report = try await OverlayPresenterTests.fakeReport()
 
         let today = try all(report, .today)
-        #expect(today.limits.map(\.name) == ["Claude 5-hour", "Cursor"])
+        #expect(today.limits.map(\.name) == ["Claude 5-hour"])
         #expect(today.headline == "Claude runs out first: 38% of its 5-hour window is left until 16:40.")
         #expect(try agent(report, .claudeCode, .today).limits.map(\.title) == ["5-hour limit 62%"])
         #expect(try agent(report, .codex, .today).limits.isEmpty)
 
         let week = try all(report, .week)
-        #expect(week.limits.map(\.name) == ["Claude 5-hour", "Claude week", "Codex week", "Cursor"])
+        #expect(week.limits.map(\.name) == ["Claude 5-hour", "Claude week", "Codex week"])
         #expect(try agent(report, .claudeCode, .week).limits.map(\.title) == ["Week limit 48%", "5-hour limit 62%"])
     }
 
@@ -117,16 +117,20 @@ struct UsagePanelPresenterTests {
         let overview = try all(report)
         #expect(overview.limits.count == 2)
         #expect(overview.limits.map(\.name).contains("Claude · Personal"))
-        #expect(overview.limits.first { $0.name == "Claude · Personal" }?.freesUp == "no current data")
+        #expect(overview.limits.first { $0.name == "Claude · Personal" }?.freesUp == "No recent limit reading")
         #expect(overview.limits.first { $0.name == "Claude · Work 5-hour" }?.used == "20%")
-        #expect(overview.limits.first { $0.name == "Claude · Work 5-hour" }?.freesUp == "Reset time unavailable")
+        #expect(overview.limits.first { $0.name == "Claude · Work 5-hour" }?.freesUp.hasPrefix("Reset time unavailable · read ") == true)
         let claude = try agent(report, .claudeCode, .today)
         #expect(claude.limits.map(\.title) == ["Work · 5-hour limit 20%"])
-        #expect(claude.limits.first?.detail == "Reset time unavailable")
+        #expect(claude.limits.first?.detail.hasPrefix("Reset time unavailable · read ") == true)
+        #expect(claude.note == NoteModel(
+            title: "Limit reading unavailable",
+            text: "No recent limit reading for Personal. Cached percentages older than 15 minutes are hidden."
+        ))
 
         let week = try all(report, .week)
         #expect(week.limits.first { $0.name == "Claude · Work week" }?.used == "40%")
-        #expect(week.limits.first { $0.name == "Claude · Work week" }?.freesUp == "Reset time unavailable")
+        #expect(week.limits.first { $0.name == "Claude · Work week" }?.freesUp.hasPrefix("Reset time unavailable · read ") == true)
     }
 
     @Test func staleSnapshotAtAResetDoesNotClaimEitherEndOfTheOldPercentage() throws {
@@ -148,11 +152,26 @@ struct UsagePanelPresenterTests {
             #expect(today.limits == [
                 LimitListRowModel(
                     id: "claude-code-/profiles/personal-none", agent: .claudeCode, name: "Claude · Personal",
-                    fraction: nil, used: "", freesUp: "no current data", isNearlyUsed: false
+                    fraction: nil, used: "", freesUp: "No recent limit reading", isNearlyUsed: false
                 )
             ])
             #expect(try agent(report, .claudeCode, .today).limits.isEmpty)
+            #expect(try agent(report, .claudeCode, .today).note?.title == "Limit reading unavailable")
         }
+    }
+
+    @Test func reportedPercentageWithoutResetSaysResetTimeIsUnavailable() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let plan = PlanUsage(
+            name: "Kiro Power", creditsUsed: 37, creditsLimit: 100,
+            usedPercent: 37, resetsAt: nil, readAt: now
+        )
+        let limits = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil, plan: plan)
+        let overview = presenter.limitRows(.kiro, limits: limits, period: .today, now: now)
+        #expect(overview.map(\.used) == ["37%"])
+        #expect(overview.map(\.freesUp) == ["Reset time unavailable"])
+        #expect(presenter.limitBars(limits, period: .today, agent: .kiro, now: now).map(\.detail)
+            == ["Reset time unavailable"])
     }
 
     // MARK: - Frame 4: every agent, today
@@ -160,12 +179,12 @@ struct UsagePanelPresenterTests {
     @Test func theAllViewMatchesFrame4() async throws {
         let model = try all(try await OverlayPresenterTests.fakeReport())
         #expect(model.headline == "Claude runs out first: 38% of its 5-hour window is left until 16:40.")
-        #expect(model.limits.map(\.name) == ["Claude 5-hour", "Cursor"])
-        #expect(model.limits.map(\.used) == ["62%", ""])
-        #expect(model.limits.map(\.freesUp) == ["16:40", "no data"])
-        // 85% or more is amber; an agent that shares no limits has no bar.
-        #expect(model.limits.map(\.isNearlyUsed) == [false, false])
-        #expect(model.limits.last?.fraction == nil)
+        #expect(model.limits.map(\.name) == ["Claude 5-hour"])
+        #expect(model.limits.map(\.used) == ["62%"])
+        #expect(model.limits.map(\.freesUp) == ["Resets 16:40"])
+        // 85% or more is amber; agents that share no limits have no empty row.
+        #expect(model.limits.map(\.isNearlyUsed) == [false])
+        #expect(model.limits.last?.fraction == 0.62)
         #expect(model.tableTitle == "TODAY")
     }
 
@@ -206,7 +225,7 @@ struct UsagePanelPresenterTests {
         #expect(model.note == nil)
         // The week first on Week, then the 5-hour window, each with when it frees up.
         #expect(model.limits.map(\.title) == ["Week limit 48%", "5-hour limit 62%"])
-        #expect(model.limits.map(\.detail) == ["frees up Thu 09:00 · in 2d 18h", "frees up 16:40 · in 2h 08m"])
+        #expect(model.limits.map(\.detail) == ["Resets Thu 09:00 · in 2d 18h", "Resets 16:40 · in 2h 08m"])
         #expect(model.limits.first?.note == "On pace to end the week at about 90%.")
         let chart = try #require(model.chart)
         #expect(chart.title == "TOKENS PER DAY")
@@ -341,7 +360,7 @@ struct UsagePanelPresenterTests {
         // One agent needs no total, and no agent has limits, so there is no headline.
         #expect(table.total == nil)
         #expect(table.headline == nil)
-        #expect(table.limits.map(\.freesUp) == ["no data"])
+        #expect(table.limits.isEmpty)
     }
 
     @Test func claudeWithoutItsStatusLineSaysHowToTurnItsLimitsOn() throws {

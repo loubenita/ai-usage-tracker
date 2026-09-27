@@ -155,12 +155,12 @@ public struct PickerItemModel: Sendable, Equatable, Identifiable {
     public let agent: Agent?
 }
 
-/// One row of the All view's limits list: "Claude 5-hour", a bar, "62%", "16:40".
+/// One reported limit, or a stale account's explanatory row without a bar.
 public struct LimitListRowModel: Sendable, Equatable, Identifiable {
     public let id: String
     public let agent: Agent
     public let name: String
-    /// Nil for an agent that shares no limits: the row says "no data".
+    /// Nil when an account is known but has no recent reading.
     public let fraction: Double?
     public let used: String
     public let freesUp: String
