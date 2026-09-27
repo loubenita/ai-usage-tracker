@@ -21,20 +21,17 @@ public struct RingModel: Sendable, Equatable {
 public struct StripItemModel: Sendable, Equatable, Identifiable {
     public let id: String
     public let ring: RingModel
-    /// The expanded strip's at-a-glance identity.
-    public let agentName: String
-    public let project: String
+    /// The expanded strip's short task identity. Provider identity is carried by the icon and
+    /// colour beside it, with the provider name in the accessibility label.
     public let title: String
-    /// The person's first request, when the session record supplies it.
-    public let firstAsk: String?
     public let time: String
+    public let account: String?
     public let needsUser: Bool
     /// The amber dot pulses until the item has been hovered once.
     public let pulses: Bool
     public let highlight: ItemHighlight
-    /// 0 for the session whose work changed most recently. At rest the strip lists the first
-    /// few in this order; the full strip keeps the order the sessions started in.
-    public let recency: Int
+    /// Rank by combined spend and context use; 0 is highest priority.
+    public let priority: Int
     public let accessibilityLabel: String
 }
 
@@ -83,8 +80,15 @@ public enum SegmentStyle: Sendable, Equatable {
 
 public struct TokenSegmentModel: Sendable, Equatable {
     public let style: SegmentStyle
-    public let fraction: Double
     public let label: String
+    public let value: String
+}
+
+public enum SessionOpenAction: Sendable, Equatable {
+    /// The terminal integration can select this exact session.
+    case session
+    /// The terminal app can be brought forward, but its exact tab cannot be selected.
+    case terminal(String)
 }
 
 public struct DetailRowModel: Sendable, Equatable {
@@ -116,19 +120,19 @@ public struct SubagentsModel: Sendable, Equatable {
 public struct SessionPanelModel: Sendable, Equatable {
     public let sessionID: String
     public let agent: Agent
-    /// "Claude · Marketing Studio".
+    /// The selected session's project, such as "Marketing Studio". The provider is its mark.
     public let subtitle: String
     public let title: String
-    /// Whether the Open button can bring the session's terminal to the front.
-    public let canOpen: Bool
+    /// What the panel can truthfully promise when its terminal button is pressed.
+    public let openAction: SessionOpenAction?
     public let status: StatusModel
     /// Total spent, Total tokens, Active, Turns: those the agent reported. The totals include
     /// any sub-agent runs listed below.
     public let stats: [StatModel]
     public let context: BarRowModel?
-    /// The agent's limit closest to running out, with this session's share of it.
-    public let limit: BarRowModel?
     public let tokenMix: [TokenSegmentModel]
+    /// Explains why a small uncached input can sit beside a much larger cache read.
+    public let tokenMixNote: String?
     /// Nil when the session started no sub-agents.
     public let subagents: SubagentsModel?
     public let details: [DetailRowModel]
@@ -190,12 +194,16 @@ public struct ModelShareRowModel: Sendable, Equatable, Identifiable {
 
 public struct ChartBarModel: Sendable, Equatable, Identifiable {
     public var id: String { label }
+    /// The day or week this bar represents; this is the selection identity, not its display text.
+    public let start: Date
     public let label: String
     public let fraction: Double
     /// The busiest bar is drawn in the agent's colour.
     public let isBusiest: Bool
     /// Today, or this week: drawn in white.
     public let isCurrent: Bool
+    /// The bar whose totals the rest of the panel shows.
+    public let isSelected: Bool
 }
 
 public struct ChartModel: Sendable, Equatable {
@@ -252,6 +260,8 @@ public struct UsagePanelModel: Sendable, Equatable {
     public let picker: [PickerItemModel]
     public let selected: AgentFilter
     public let period: UsagePeriod
+    /// Nil for Today; Week defaults to today and Month to the current week.
+    public let selectedBucketStart: Date?
     /// "Refreshes in 8:12", or "Refreshing…"; nil before the first countdown starts.
     public let refreshLabel: String?
     public let content: UsageContent

@@ -139,6 +139,35 @@ struct ClaudeLimitsLogTests {
     {"at":1790023700}
     """
 
+    @Test func separatesRegisteredProfiles() {
+        let data = Data("""
+        {"at":1790020000,"account_id":"/tmp/.claude-work","account_name":"Work","five_hour":{"used_percentage":40,"resets_at":1790031600}}
+        {"at":1790020100,"account_id":"/tmp/.claude-personal","account_name":"Personal","five_hour":{"used_percentage":72,"resets_at":1790031600}}
+        """.utf8)
+        let readings = ClaudeLimitsLog.readings(in: data, since: .distantPast)
+        #expect(readings.map(\.accountName) == ["Work", "Personal"])
+        #expect(ClaudeLimitsLog.accounts(in: data) == [
+            "/tmp/.claude-work": "Work", "/tmp/.claude-personal": "Personal"
+        ])
+    }
+
+    @Test func readsExistingAccountPercentageCache() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = root.appendingPathComponent(".claude/orchestrator/usage")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let json = """
+        {"config_dir":"\(root.path)/.claude-work","five_hour_pct":20,"weekly_pct":27,"as_of":1790000000}
+        """
+        try json.write(to: directory.appendingPathComponent("account-2.json"), atomically: true, encoding: .utf8)
+        let snapshots = ClaudeAccountCache.read(homeDirectory: root.path, files: FileAccess(), now: now)
+        #expect(snapshots.count == 1)
+        #expect(snapshots.first?.name == "work")
+        #expect(snapshots.first?.fiveHourPercent == 20)
+        #expect(snapshots.first?.weeklyPercent == 27)
+    }
+
     @Test func readsBothWindows() throws {
         let readings = ClaudeLimitsLog.readings(in: Data(Self.log.utf8), since: .distantPast)
         #expect(readings.count == 2)

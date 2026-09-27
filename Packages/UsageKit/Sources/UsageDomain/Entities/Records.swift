@@ -94,8 +94,16 @@ public struct LimitReading: Sendable, Hashable, Codable {
     public let agent: Agent
     public let plan: String?
     public let windows: [LimitWindowReading]
+    /// The profile that reported these limits, when identifiable.
+    public let accountID: String?
+    public let accountName: String?
 
-    public init(timestamp: Date, agent: Agent, plan: String?, windows: [LimitWindowReading]) {
+    public init(
+        timestamp: Date, agent: Agent, plan: String?, windows: [LimitWindowReading],
+        accountID: String? = nil, accountName: String? = nil
+    ) {
+        self.accountID = accountID
+        self.accountName = accountName
         self.timestamp = timestamp
         self.agent = agent
         self.plan = plan
@@ -190,6 +198,28 @@ public struct SessionSnapshot: Sendable, Hashable {
     }
 }
 
+/// Percentages a local account cache knows without a reset time.
+public struct AccountUsageSnapshot: Sendable, Hashable {
+    public let id: String
+    public let name: String
+    public let agent: Agent
+    public let readAt: Date
+    public let fiveHourPercent: Double?
+    public let weeklyPercent: Double?
+
+    public init(
+        id: String, name: String, agent: Agent, readAt: Date,
+        fiveHourPercent: Double?, weeklyPercent: Double?
+    ) {
+        self.id = id
+        self.name = name
+        self.agent = agent
+        self.readAt = readAt
+        self.fiveHourPercent = fiveHourPercent
+        self.weeklyPercent = weeklyPercent
+    }
+}
+
 /// A `session` record: a session starting, going idle, becoming active again, or ending.
 public struct SessionEvent: Sendable, Hashable {
     public enum Kind: String, Sendable, Hashable {
@@ -244,6 +274,7 @@ public struct SessionEvent: Sendable, Hashable {
 public struct UsageRecords: Sendable {
     public let turns: [Turn]
     public let limits: [LimitReading]
+    public let accountSnapshots: [AccountUsageSnapshot]
     public let sessionEvents: [SessionEvent]
     /// When the records were last read from their source.
     public let capturedAt: Date
@@ -263,6 +294,7 @@ public struct UsageRecords: Sendable {
         limits: [LimitReading],
         sessionEvents: [SessionEvent],
         capturedAt: Date,
+        accountSnapshots: [AccountUsageSnapshot] = [],
         usualRates: [Agent: UsualRate] = [:],
         isHistoryComplete: Bool = true,
         creditsThisMonth: [Agent: Double] = [:],
@@ -271,6 +303,7 @@ public struct UsageRecords: Sendable {
         self.plans = plans
         self.turns = turns
         self.limits = limits
+        self.accountSnapshots = accountSnapshots
         self.sessionEvents = sessionEvents
         self.capturedAt = capturedAt
         self.creditsThisMonth = creditsThisMonth

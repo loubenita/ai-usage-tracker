@@ -25,6 +25,35 @@ struct UsagePanelPresenterTests {
         return model
     }
 
+    func usageReport(now: Date, turns: [Turn]) -> UsageReport {
+        GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
+            calendar: calendar
+        )(UsageRecords(turns: turns, limits: [], sessionEvents: [], capturedAt: now), now: now)
+    }
+
+    func usageTurn(
+        _ id: String,
+        at timestamp: Date,
+        session: String,
+        model: ModelName,
+        tokens: Int,
+        cost: Decimal,
+        tag: WorkTag
+    ) -> Turn {
+        Turn(
+            id: id,
+            timestamp: timestamp,
+            agent: .claudeCode,
+            sessionID: session,
+            model: model,
+            work: Work(tag: tag),
+            tokens: TokenUsage(input: tokens),
+            cost: Cost(usd: cost),
+            context: nil
+        )
+    }
+
     enum Failure: Error { case wrongView }
 
     // MARK: - The picker
@@ -50,6 +79,36 @@ struct UsagePanelPresenterTests {
         #expect(codex.whereRows.map(\.label) == ["OpenKitchen · Bug fixes"])
         #expect(codex.models.map(\.name) == ["gpt-5.6"])
         #expect(codex.stats.first { $0.label == "Tokens" }?.value == "410k")
+    }
+
+    @Test func twoClaudeAccountsShowSeparatePercentagesWithoutResetTimes() throws {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let snapshots = [
+            AccountUsageSnapshot(
+                id: "/profiles/work", name: "Work", agent: .claudeCode, readAt: now,
+                fiveHourPercent: 20, weeklyPercent: 40
+            ),
+            AccountUsageSnapshot(
+                id: "/profiles/personal", name: "Personal", agent: .claudeCode,
+                readAt: now - 3600, fiveHourPercent: 80, weeklyPercent: 90
+            )
+        ]
+        let records = UsageRecords(
+            turns: [], limits: [], sessionEvents: [], capturedAt: now, accountSnapshots: snapshots
+        )
+        let report = GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
+            calendar: calendar
+        )(records, now: now)
+        let overview = try all(report)
+        #expect(overview.limits.count == 4)
+        #expect(overview.limits.map(\.name).contains("Claude · Personal 5-hour"))
+        #expect(overview.limits.map(\.name).contains("Claude · Work week"))
+        #expect(overview.limits.first { $0.name == "Claude · Personal week" }?.used == "90%")
+        #expect(overview.limits.first { $0.name == "Claude · Personal week" }?.freesUp.contains("Last read") == true)
+        let claude = try agent(report, .claudeCode, .today)
+        #expect(claude.limits.count == 4)
+        #expect(claude.limits.first { $0.title.contains("Personal") }?.detail.contains("may have reset") == true)
     }
 
     // MARK: - Frame 4: every agent, today
@@ -106,17 +165,49 @@ struct UsagePanelPresenterTests {
         #expect(model.limits.map(\.title) == ["Week limit 48%", "5-hour limit 62%"])
         #expect(model.limits.map(\.detail) == ["frees up Thu 09:00 · in 2d 18h", "frees up 16:40 · in 2h 08m"])
         #expect(model.limits.first?.note == "On pace to end the week at about 90%.")
-        #expect(model.stats == [
-            StatModel(label: "Spent", value: "$31.40"), StatModel(label: "Tokens", value: "12.2M"),
-            StatModel(label: "Time", value: "22h 04m"), StatModel(label: "Sessions", value: "14"),
-        ])
         let chart = try #require(model.chart)
         #expect(chart.title == "TOKENS PER DAY")
         #expect(chart.caption == "busiest Thu · 3.1M")
         #expect(chart.bars.map(\.label) == ["Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Today"])
         #expect(chart.bars.map(\.isBusiest) == [false, false, true, false, false, false, false])
         #expect(chart.bars.last?.isCurrent == true)
-        #expect(model.models.map(\.name) == ["Opus 5", "Sonnet 5", "Haiku 4.5"])
+        #expect(chart.bars.last?.isSelected == true)
+    }
+
+    @Test func selectingAWeekDayShowsThatDaysSpendModelsAndWorkWhileAllStaysWeekly() throws {
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let startOfToday = calendar.startOfDay(for: now)
+        let selectedDay = calendar.date(byAdding: .day, value: -2, to: startOfToday)!
+        let selectedTag = WorkTag(project: "Demo", concern: "Selected")
+        let currentTag = WorkTag(project: "Demo", concern: "Current")
+        let report = usageReport(now: now, turns: [
+            usageTurn("selected-1", at: selectedDay + 9 * 3600, session: "selected", model: "claude-opus-5", tokens: 300, cost: 2, tag: selectedTag),
+            usageTurn("selected-2", at: selectedDay + 9 * 3600 + 5 * 60, session: "selected", model: "claude-opus-5", tokens: 400, cost: 4, tag: selectedTag),
+            usageTurn("current-1", at: startOfToday + 9 * 3600, session: "current", model: "claude-sonnet-5", tokens: 200, cost: 1, tag: currentTag),
+            usageTurn("current-2", at: startOfToday + 10 * 3600, session: "current", model: "claude-sonnet-5", tokens: 300, cost: 4, tag: currentTag),
+        ])
+        let selectedPanel = presenter.panel(
+            report, filter: .agent(.claudeCode), period: .week, selectedBucketStart: selectedDay
+        )
+        let selectedAgent = try #require({
+            if case .agent(let model) = selectedPanel.content { return model }
+            return nil
+        }())
+        #expect(selectedPanel.selectedBucketStart == selectedDay)
+        #expect(selectedAgent.chart?.bars.filter(\.isSelected).map(\.start) == [selectedDay])
+        #expect(selectedAgent.stats == [
+            StatModel(label: "Spent", value: "$6.00"), StatModel(label: "Tokens", value: "700"),
+            StatModel(label: "Time", value: "5m"), StatModel(label: "Sessions", value: "1"),
+        ])
+        #expect(selectedAgent.models == [ModelShareRowModel(name: "Opus 5", percent: "100%")])
+        #expect(selectedAgent.whereRows == [
+            TimeRowModel(id: "Demo/Selected", agent: .claudeCode, label: "Demo · Selected", percent: "100%", time: "5m")
+        ])
+
+        let all = try all(report, .week)
+        #expect(all.tableTitle == "THIS WEEK")
+        #expect(all.rows.first { $0.agent == .claudeCode }?.tokens == "1k")
+        #expect(all.rows.first { $0.agent == .claudeCode }?.spend == "$11.00")
     }
 
     // MARK: - Frame 6: Cursor's month
@@ -128,18 +219,49 @@ struct UsagePanelPresenterTests {
             text: "Cursor doesn't share tokens, cost or limits on this Mac, so this shows time and activity only."
         ))
         #expect(model.limits.isEmpty)
-        #expect(model.stats == [
-            StatModel(label: "Time", value: "16h 55m"), StatModel(label: "Sessions", value: "9"),
-            StatModel(label: "Prompts", value: "212"), StatModel(label: "Tool calls", value: "1,480"),
-        ])
         let chart = try #require(model.chart)
         #expect(chart.title == "HOURS PER WEEK")
         #expect(chart.caption == "September")
         // Weeks from Monday; the first starts on the 1st, the month's own first day.
         #expect(chart.bars.map(\.label) == ["1 Sep · 3h", "7 Sep · 4h", "14 Sep · 10h", "Now · 30m"])
         #expect(chart.bars.map(\.isBusiest) == [false, false, true, false])
-        #expect(model.models.map(\.name) == ["Auto", "gpt-5.6"])
-        #expect(model.whereRows.map(\.label) == ["OpenKitchen · iOS", "3 more"])
+        #expect(chart.bars.last?.isSelected == true)
+    }
+
+    @Test func selectingAMonthWeekShowsThatWeeksConcreteDetailAndEmptyBucketsStayEmpty() throws {
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let startOfToday = calendar.startOfDay(for: now)
+        let selectedWeekDay = calendar.date(byAdding: .day, value: -8, to: startOfToday)!
+        let selectedTag = WorkTag(project: "Demo", concern: "Week")
+        let report = usageReport(now: now, turns: [
+            usageTurn("week-1", at: selectedWeekDay + 9 * 3600, session: "week", model: "claude-opus-5", tokens: 250, cost: 2, tag: selectedTag),
+            usageTurn("week-2", at: selectedWeekDay + 9 * 3600 + 5 * 60, session: "week", model: "claude-opus-5", tokens: 350, cost: 3, tag: selectedTag),
+        ])
+        let selectedWeek = try #require(report.periods[.month]?.buckets.first { $0.tokens == 600 }?.start)
+        let panel = presenter.panel(report, filter: .agent(.claudeCode), period: .month, selectedBucketStart: selectedWeek)
+        let agent = try #require({
+            if case .agent(let model) = panel.content { return model }
+            return nil
+        }())
+        #expect(panel.selectedBucketStart == selectedWeek)
+        #expect(agent.stats == [
+            StatModel(label: "Spent", value: "$5.00"), StatModel(label: "Tokens", value: "600"),
+            StatModel(label: "Time", value: "5m"), StatModel(label: "Sessions", value: "1"),
+        ])
+        #expect(agent.models == [ModelShareRowModel(name: "Opus 5", percent: "100%")])
+        #expect(agent.whereRows == [
+            TimeRowModel(id: "Demo/Week", agent: .claudeCode, label: "Demo · Week", percent: "100%", time: "5m")
+        ])
+
+        let emptyWeek = try #require(report.periods[.month]?.buckets.first { $0.tokens == 0 }?.start)
+        let emptyPanel = presenter.panel(report, filter: .agent(.claudeCode), period: .month, selectedBucketStart: emptyWeek)
+        let empty = try #require({
+            if case .agent(let model) = emptyPanel.content { return model }
+            return nil
+        }())
+        #expect(empty.stats.isEmpty)
+        #expect(empty.models.isEmpty)
+        #expect(empty.whereRows.isEmpty)
     }
 
     @Test func anAgentWithOnlyAnOpenSessionIsMeasuredByIt() throws {

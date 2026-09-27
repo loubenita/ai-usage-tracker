@@ -270,6 +270,37 @@ struct ProcessSessionRepositoryTests {
         func workingDirectory(of pid: Int32) -> String? { pid == 35056 ? "/nonexistent/ai-usage-tracker" : nil }
     }
 
+    @Test func findsSessionsFromBothClaudeProfiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for profile in [".claude", ".claude-loubenita"] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(profile + "/sessions"), withIntermediateDirectories: true
+            )
+        }
+        try """
+        {"pid":3857,"sessionId":"main-profile","cwd":"/tmp"}
+        """.write(
+            to: root.appendingPathComponent(".claude/sessions/3857.json"),
+            atomically: true, encoding: .utf8
+        )
+        try """
+        {"pid":35056,"sessionId":"second-profile","cwd":"/tmp"}
+        """.write(
+            to: root.appendingPathComponent(".claude-loubenita/sessions/35056.json"),
+            atomically: true, encoding: .utf8
+        )
+        let repository = ProcessSessionRepository(
+            source: RecordedSource(text: try Fixture.text("ps-2026-09-21.txt")),
+            homeDirectory: root.path, timeZone: Fixture.london
+        )
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        #expect(records.sessionEvents.first { $0.origin?.pid == 3857 }?.origin?.accountName == "Default")
+        #expect(records.sessionEvents.first { $0.origin?.pid == 35056 }?.origin?.accountName == "loubenita")
+        #expect(records.sessionEvents.first { $0.origin?.pid == 35056 }?.origin?.accountID
+            == root.path + "/.claude-loubenita")
+    }
+
     @Test func servesOneStartRecordPerSession() async throws {
         let repository = ProcessSessionRepository(
             source: RecordedSource(text: try Fixture.text("ps-2026-09-21.txt")),

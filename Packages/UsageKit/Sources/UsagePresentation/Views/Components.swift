@@ -69,6 +69,42 @@ struct AgentDot: View {
     }
 }
 
+/// A compact provider mark whose symbol, silhouette and colour remain distinct when the name
+/// is hidden from the strip. VoiceOver still reads the provider name.
+struct AgentMark: View {
+    let agent: Agent
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(Theme.agent(agent))
+            .frame(width: 24, height: 24)
+            .background(background)
+            .accessibilityLabel(agent.displayName)
+    }
+
+    @ViewBuilder private var background: some View {
+        switch agent {
+        case .claudeCode, .cursor, .antigravity:
+            Circle().fill(Theme.agent(agent).opacity(0.14))
+        case .codex, .kiro, .opencode:
+            RoundedRectangle(cornerRadius: agent == .codex ? 7 : 5)
+                .fill(Theme.agent(agent).opacity(0.14))
+        }
+    }
+
+    private var symbol: String {
+        switch agent {
+        case .claudeCode: "sparkles"
+        case .codex: "terminal"
+        case .cursor: "cursorarrow.rays"
+        case .kiro: "k.square.fill"
+        case .antigravity: "atom"
+        case .opencode: "chevron.left.forwardslash.chevron.right"
+        }
+    }
+}
+
 /// A thin rounded bar: a track, the used part, and optionally a highlighted part at its end.
 struct ProgressBar: View {
     let fraction: Double
@@ -232,33 +268,27 @@ extension SegmentStyle {
     }
 }
 
-/// In, out, cache read and cache write as one 5pt bar in 2pt-apart pieces, labelled under it.
+/// Token categories as readable rows. Proportional micro-segments made uncached input almost
+/// disappear beside a large cache read, so each reported category receives equal visual room.
 struct TokenMixView: View {
     let segments: [TokenSegmentModel]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            GeometryReader { proxy in
-                let gap: CGFloat = 2
-                let available = proxy.size.width - gap * CGFloat(max(segments.count - 1, 0))
-                HStack(spacing: gap) {
-                    ForEach(segments.indices, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(segments[index].style.barColor)
-                            .frame(width: max(available * segments[index].fraction, 2))
+        LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], alignment: .leading, spacing: 8) {
+            ForEach(segments.indices, id: \.self) { index in
+                HStack(spacing: 7) {
+                    Capsule()
+                        .fill(segments[index].style.barColor)
+                        .frame(width: 4, height: 24)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(segments[index].label)
+                            .font(TypeScale.captionFont)
+                            .foregroundStyle(segments[index].style.labelColor)
+                        Text(segments[index].value)
+                            .font(TypeScale.font(TypeScale.body, .semibold))
+                            .foregroundStyle(Theme.primary)
+                            .staticDigits()
                     }
-                }
-            }
-            .frame(height: 5)
-            HStack(spacing: 0) {
-                ForEach(segments.indices, id: \.self) { index in
-                    if index > 0 { Spacer(minLength: 4) }
-                    Text(segments[index].label)
-                        .font(TypeScale.captionFont)
-                        .foregroundStyle(segments[index].style.labelColor)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .staticDigits()
                 }
             }
         }

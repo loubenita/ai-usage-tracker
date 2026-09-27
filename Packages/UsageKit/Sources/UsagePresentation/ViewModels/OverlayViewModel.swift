@@ -6,13 +6,15 @@ import UsageDomain
 ///
 /// Each part is refreshed as often as it changes, so the main thread stays free:
 /// - every second, only the timers move (the open sessions are re-summed from their own turns);
-/// - every `reloadInterval` seconds, the open sessions are read, without the month of history;
+/// - every `reloadInterval` seconds, the open sessions are read, without waking the month history;
 /// - every `totalsInterval` seconds (10 minutes), or when the usage panel's refresh button is pressed,
 ///   Today, Week, Month and the limits are rebuilt from every record, off the main thread. Until
 ///   the history has finished its first read, that happens every `pendingTotalsInterval` seconds.
 @MainActor
 @Observable
 public final class OverlayViewModel {
+    /// Process discovery is fresh enough to feel live without launching `ps` every two seconds.
+    public static let defaultReloadInterval = 6
     public private(set) var report: UsageReport?
     public private(set) var hoveredSessionID: String?
     public private(set) var openSessionID: String?
@@ -21,8 +23,14 @@ public final class OverlayViewModel {
     /// Whether the usage button's panel is open. It shows every agent, so no session is selected.
     public private(set) var isOverviewOpen = false
     /// The usage panel's period and whose usage it shows.
-    public var usagePeriod: UsagePeriod = .today
+    public var usagePeriod: UsagePeriod = .today {
+        didSet {
+            if oldValue != usagePeriod { selectedUsageBucketStart = nil }
+        }
+    }
     public var usageFilter: AgentFilter = .all
+    /// The selected day in Week or week in Month. Nil lets the presenter choose the current bar.
+    public private(set) var selectedUsageBucketStart: Date?
     /// Sessions whose "needs you" dot has been seen by hovering, so it stops pulsing.
     public private(set) var acknowledgedSessionIDs: Set<String> = []
     public private(set) var loadError: String?
@@ -62,7 +70,7 @@ public final class OverlayViewModel {
         repository: any UsageRepository,
         timeSource: any TimeSource,
         calendar: Calendar,
-        reloadInterval: Int = 2,
+        reloadInterval: Int = OverlayViewModel.defaultReloadInterval,
         totalsInterval: Int = 600,
         opener: (any SessionOpening)? = nil,
         stripOffset: CGFloat = 0,
@@ -121,7 +129,7 @@ public final class OverlayViewModel {
         await loadTotals()
     }
 
-    /// Reads the open sessions only: cheap enough to do every couple of seconds.
+    /// Reads the open sessions only: cheap enough to do every six seconds.
     func loadSessions() async {
         do {
             let generate = try await makeGenerate()
@@ -234,7 +242,14 @@ public final class OverlayViewModel {
             isOverviewOpen = true
             usagePeriod = .today
             usageFilter = .all
+            selectedUsageBucketStart = nil
         }
+    }
+
+    /// Picking a chart bar changes the historical spend detail only. Account limits remain live.
+    public func selectUsageBucket(_ start: Date) {
+        guard usagePeriod != .today else { return }
+        selectedUsageBucketStart = start
     }
 
     /// The session panel's Open button: brings the session's terminal to the front. It runs
@@ -244,8 +259,8 @@ public final class OverlayViewModel {
         opener?.open(origin)
     }
 
-    /// Pressing and holding the strip picks it up; it then follows the pointer up and down the
-    /// screen's edge, and stays where it is dropped.
+    /// Dragging the visible handle picks the strip up; it then follows the pointer up and down
+    /// the screen's edge, and stays where it is dropped.
     public func beginStripDrag() {
         isDraggingStrip = true
     }
@@ -255,7 +270,7 @@ public final class OverlayViewModel {
     ///   - limit: how far it may go before it would leave the screen.
     public func dragStrip(to offset: CGFloat, limit: CGFloat) {
         guard isDraggingStrip else { return }
-        stripOffset = StripLayout.dragged(from: offset, by: 0, limit: limit)
+        stripOffset = StripLayout.dragged(logicalOrigin: offset, by: 0, limit: limit)
     }
 
     public func endStripDrag() {
@@ -271,10 +286,8 @@ public final class OverlayViewModel {
 
     public var isOpen: Bool { openSessionID != nil || isOverviewOpen }
 
-    /// The full strip shows while the pointer is over it or a panel is open, and it keeps that
-    /// size while it is dragged: changing size mid-drag moved the handle out from under the
-    /// pointer and ended the drag.
-    public var isStripExpanded: Bool { isPointerOverStrip || isOpen || isDraggingStrip }
+    /// Hover or an open panel expands the strip. Dragging makes the entire strip compact.
+    public var isStripExpanded: Bool { !isDraggingStrip && (isPointerOverStrip || isOpen) }
 
     // MARK: - What to draw
 
@@ -298,7 +311,10 @@ public final class OverlayViewModel {
     public var overview: UsagePanelModel? {
         guard let report, isOverviewOpen else { return nil }
         return usagePresenter.panel(
-            report, filter: usageFilter, period: usagePeriod,
+            report,
+            filter: usageFilter,
+            period: usagePeriod,
+            selectedBucketStart: selectedUsageBucketStart,
             refresh: isRefreshingTotals ? .refreshing : nextTotalsAt.map { .next(in: $0.timeIntervalSince(report.now)) }
         )
     }

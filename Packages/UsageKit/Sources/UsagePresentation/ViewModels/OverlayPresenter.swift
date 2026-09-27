@@ -5,7 +5,7 @@ import UsageDomain
 /// sentence and number on screen can be unit-tested without a window. The usage panel is
 /// `UsagePanelPresenter`.
 public struct OverlayPresenter: Sendable {
-    /// The first ask is cut to this many characters, so its closing quote still shows.
+    /// The first ask is kept in the selected session's details and cut to this many characters.
     static let firstAskLength = 28
 
     let format: UsageFormatter
@@ -23,11 +23,24 @@ public struct OverlayPresenter: Sendable {
         acknowledged: Set<String>,
         expanded: Bool = true
     ) -> StripModel {
-        // Which sessions were busy most recently, so the resting strip can show those first.
-        let byRecency = report.sessions
-            .sorted { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
-            .enumerated()
-            .reduce(into: [String: Int]()) { $0[$1.element.id] = $1.offset }
+        // Equal weight to spend and context fullness. Unknown readings rank last for that
+        // measure; recent activity breaks ties so the collapsed list remains predictable.
+        let sessions = report.sessions
+        let bySpend = sessions.sorted { lhs, rhs in
+            (lhs.summary.costUSD ?? -1) > (rhs.summary.costUSD ?? -1)
+        }
+        let byContext = sessions.sorted { lhs, rhs in
+            (lhs.summary.context?.fraction ?? -1) > (rhs.summary.context?.fraction ?? -1)
+        }
+        let spendRank = Dictionary(uniqueKeysWithValues: bySpend.enumerated().map { ($0.element.id, $0.offset) })
+        let contextRank = Dictionary(uniqueKeysWithValues: byContext.enumerated().map { ($0.element.id, $0.offset) })
+        let priority = sessions.sorted { lhs, rhs in
+            let left = (spendRank[lhs.id] ?? 0) + (contextRank[lhs.id] ?? 0)
+            let right = (spendRank[rhs.id] ?? 0) + (contextRank[rhs.id] ?? 0)
+            if left != right { return left < right }
+            return lhs.summary.lastActivityAt > rhs.summary.lastActivityAt
+        }
+        let priorityRank = Dictionary(uniqueKeysWithValues: priority.enumerated().map { ($0.element.id, $0.offset) })
         let items = report.sessions.map { session in
             let summary = session.summary
             let highlight: ItemHighlight =
@@ -35,20 +48,19 @@ public struct OverlayPresenter: Sendable {
             return StripItemModel(
                 id: summary.id,
                 ring: ring(session),
-                agentName: summary.agent.displayName,
-                project: summary.work.tag.project,
                 title: session.title,
-                firstAsk: summary.activity?.firstAsk,
                 // Short, so it fits the 30pt strip; the panel says it in full.
                 time: format.compactDuration(summary.activeDuration),
+                account: summary.origin?.accountName,
                 needsUser: summary.needsUser,
                 pulses: summary.needsUser && !acknowledged.contains(summary.id),
                 highlight: highlight,
-                recency: byRecency[summary.id] ?? 0,
+                priority: priorityRank[summary.id] ?? 0,
                 accessibilityLabel: [
                     session.title,
                     summary.agent.displayName,
                     summary.work.tag.project,
+                    summary.origin?.accountName.map { "account \($0)" },
                     summary.activity?.firstAsk,
                     format.duration(summary.activeDuration),
                     summary.context.map {
@@ -69,17 +81,26 @@ public struct OverlayPresenter: Sendable {
         return SessionPanelModel(
             sessionID: sessionID,
             agent: summary.agent,
-            subtitle: "\(summary.agent.displayName) · \(summary.work.tag.project)",
+            subtitle: [summary.work.tag.project, summary.origin?.accountName]
+                .compactMap { $0 }.joined(separator: " · "),
             title: session.title,
-            canOpen: summary.origin.map(TerminalFocus.canOpen) ?? false,
+            openAction: summary.origin.flatMap(openAction),
             status: status(session, report: report),
             stats: stats(summary),
             context: contextRow(session, now: report.now),
-            limit: limitRow(session, limits: report.limits(for: summary.agent), now: report.now),
             tokenMix: summary.tokens.map(tokenMix) ?? [],
+            tokenMixNote: summary.tokens.flatMap(tokenMixNote),
             subagents: subagents(summary),
             details: details(session, now: report.now)
         )
+    }
+
+    func openAction(_ origin: SessionOrigin) -> SessionOpenAction? {
+        switch TerminalFocus.action(for: origin) {
+        case .session: .session
+        case .application(let terminal): .terminal(terminal.displayName)
+        case nil: nil
+        }
     }
 
     /// Spent, Tokens, Active and Turns, each only when the agent reported it. An agent that
@@ -112,25 +133,6 @@ public struct OverlayPresenter: Sendable {
         return BarRowModel(
             title: "Context \(format.percent(context.fraction))", detail: detail, fraction: context.fraction,
             highlightFraction: nil, isNearlyUsed: false, note: nil
-        )
-    }
-
-    /// The agent's limit closest to running out, "5-hour limit 62%", with "9% this session ·
-    /// resets 16:40". Only the 5-hour limit knows this session's share.
-    func limitRow(_ session: SessionReport, limits: AgentLimits, now: Date) -> BarRowModel? {
-        guard let standing = OverviewSummary.tightestStanding(limits) else { return nil }
-        let share = standing.kind == .fiveHour ? session.shareOfFiveHourLimit : nil
-        let detail = [
-            share.flatMap { $0 >= 0.5 ? "\(format.percentPoints($0)) this session" : nil },
-            standing.resetsAt.map { "resets \(format.moment($0, now: now))" },
-        ].compactMap { $0 }.joined(separator: " · ")
-        return BarRowModel(
-            title: "\(Self.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))",
-            detail: detail,
-            fraction: standing.usedPercent / 100,
-            highlightFraction: share.map { min($0, standing.usedPercent) / 100 },
-            isNearlyUsed: standing.isNearlyUsed,
-            note: nil
         )
     }
 
@@ -207,6 +209,7 @@ public struct OverlayPresenter: Sendable {
             ),
             work.isEmpty ? nil : DetailRowModel(label: "Work", value: work.joined(separator: " · ")),
             summary.work.branch.map { DetailRowModel(label: "Branch", value: $0) },
+            summary.origin?.accountName.map { DetailRowModel(label: "Account", value: $0) },
             activity?.firstAsk.map { DetailRowModel(label: "First ask", value: quoted($0)) },
         ].compactMap { $0 }
     }
@@ -275,17 +278,22 @@ public struct OverlayPresenter: Sendable {
         }
     }
 
-    /// "In 52k", "Out 14k", "Cache read 200k", "Cache write 14k": the parts the agent reported.
+    /// "Input 52k", "Output 14k", "Cache read 200k", "Cache write 14k": what the agent reported.
     func tokenMix(_ tokens: TokenUsage) -> [TokenSegmentModel] {
-        let total = Double(tokens.total ?? 0)
-        guard total > 0 else { return [] }
         let parts: [(SegmentStyle, String, Int?)] = [
-            (.input, "In", tokens.input), (.output, "Out", tokens.output),
+            (.input, "Input", tokens.input), (.output, "Output", tokens.output),
             (.cacheRead, "Cache read", tokens.cacheRead), (.cacheWrite, "Cache write", tokens.cacheWrite),
         ]
         return parts.compactMap { style, name, value in
             guard let value, value > 0 else { return nil }
-            return TokenSegmentModel(style: style, fraction: Double(value) / total, label: "\(name) \(format.tokens(value))")
+            return TokenSegmentModel(
+                style: style, label: name, value: format.tokens(value)
+            )
         }
+    }
+
+    func tokenMixNote(_ tokens: TokenUsage) -> String? {
+        guard (tokens.cacheRead ?? 0) > 0 else { return nil }
+        return "Input is new, uncached text. Cache read is context reused from earlier turns."
     }
 }

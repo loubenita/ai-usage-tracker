@@ -111,6 +111,15 @@ public struct AgentLimits: Sendable, Hashable {
     public var isEmpty: Bool { !hasWindows && creditsUsedThisMonth == nil && plan == nil && creditsUsedToday == nil }
 }
 
+/// One account's limits. The account ID is its local profile directory, never displayed.
+public struct AccountLimitReport: Sendable, Hashable {
+    public let id: String
+    public let name: String
+    public let agent: Agent
+    public let limits: AgentLimits
+    public let snapshot: AccountUsageSnapshot?
+}
+
 /// The slow half of the report: every total, built from all the records at `builtAt`.
 public struct UsageTotals: Sendable, Hashable {
     public let builtAt: Date
@@ -118,6 +127,7 @@ public struct UsageTotals: Sendable, Hashable {
     public let week: WeekReport
     public let month: MonthReport
     public let limitsByAgent: [Agent: AgentLimits]
+    public let accounts: [AccountLimitReport]
     public let isHistoryComplete: Bool
     /// Today, the week and the month, agent by agent, for the overview.
     public let periods: [UsagePeriod: PeriodUsage]
@@ -132,6 +142,7 @@ public struct UsageReport: Sendable, Hashable {
     public let week: WeekReport
     public let month: MonthReport
     public let limitsByAgent: [Agent: AgentLimits]
+    public let accounts: [AccountLimitReport]
     public let periods: [UsagePeriod: PeriodUsage]
     /// False while the week's history is still being read (see `UsageRecords`).
     public let isHistoryComplete: Bool
@@ -191,15 +202,25 @@ public struct GenerateUsageReport: Sendable {
         let todaysTurns = turns.filter { $0.timestamp >= startOfToday }
         let creditsToday = Dictionary(grouping: todaysTurns.filter { $0.credits != nil }, by: \.agent)
             .compactMapValues(Breakdown.totalCredits)
+        let accounts = accountLimits(records, now: now)
+        var agentLimits = limitsByAgent(
+            records.limits.filter { $0.agent != .claudeCode || $0.accountID == nil },
+            credits: records.creditsThisMonth, plans: records.plans, creditsToday: creditsToday, now: now
+        )
+        let claudeAccounts = accounts.filter { $0.agent == .claudeCode && $0.limits.hasWindows }
+        if let tightest = claudeAccounts.max(by: {
+            (OverviewSummary.tightestStanding($0.limits)?.usedPercent ?? 0)
+                < (OverviewSummary.tightestStanding($1.limits)?.usedPercent ?? 0)
+        }) {
+            agentLimits[.claudeCode] = tightest.limits
+        }
         return UsageTotals(
             builtAt: now,
             today: makeToday(todaysTurns, now: now),
             week: makeWeek(turns, now: now),
             month: makeMonth(turns, now: now),
-            limitsByAgent: limitsByAgent(
-                records.limits, credits: records.creditsThisMonth, plans: records.plans, creditsToday: creditsToday,
-                now: now
-            ),
+            limitsByAgent: agentLimits,
+            accounts: accounts,
             isHistoryComplete: records.isHistoryComplete,
             periods: periods(turns, open: Set(records.sessionEvents.map(\.agent)), now: now)
         )
@@ -234,10 +255,25 @@ public struct GenerateUsageReport: Sendable {
         let summaries = SessionSummaries.make(turns: turns, events: records.sessionEvents, now: now)
             .filter { $0.state != .ended }
         let limits = totals.limitsByAgent
-        let sessions = summaries.map {
-            makeSession(
-                $0, turns: turnsBySession[$0.id] ?? [], usual: records.usualRates[$0.agent],
-                todaysCost: totals.today.costUSD, fiveHour: limits[$0.agent]?.fiveHour, now: now
+        // Account caches change with a status-line render, between slower totals rebuilds.
+        // Merge their latest readings into the live report so the panel stays current.
+        var accountsByID = Dictionary(uniqueKeysWithValues: totals.accounts.map { ($0.id, $0) })
+        let freshAccounts = accountLimits(records, now: now)
+        for account in freshAccounts {
+            let previous = accountsByID[account.id]
+            accountsByID[account.id] = AccountLimitReport(
+                id: account.id, name: account.name, agent: account.agent,
+                limits: previous?.limits.hasWindows == true ? previous!.limits : account.limits,
+                snapshot: account.snapshot ?? previous?.snapshot
+            )
+        }
+        let accounts = accountsByID.values.sorted { $0.id < $1.id }
+        let sessions = summaries.map { summary in
+            let accountLimit = accounts.first { $0.id == summary.origin?.accountID }?.limits.fiveHour
+            return makeSession(
+                summary, turns: turnsBySession[summary.id] ?? [], usual: records.usualRates[summary.agent],
+                todaysCost: totals.today.costUSD,
+                fiveHour: accountLimit ?? limits[summary.agent]?.fiveHour, now: now
             )
         }
         return UsageReport(
@@ -248,10 +284,35 @@ public struct GenerateUsageReport: Sendable {
             week: totals.week,
             month: totals.month,
             limitsByAgent: limits,
+            accounts: accounts,
             periods: totals.periods,
             isHistoryComplete: totals.isHistoryComplete,
             stripAgent: Self.stripAgent(sessions: summaries, limits: limits)
         )
+    }
+
+    private func accountLimits(_ records: UsageRecords, now: Date) -> [AccountLimitReport] {
+        let readings = Dictionary(grouping: records.limits.filter { $0.accountID != nil }) { $0.accountID! }
+        let sessions = records.sessionEvents.compactMap { event -> (String, String, Agent)? in
+            guard let origin = event.origin, let id = origin.accountID,
+                  let name = origin.accountName else { return nil }
+            return (id, name, event.agent)
+        }
+        let snapshots = Dictionary(uniqueKeysWithValues: records.accountSnapshots.map { ($0.id, $0) })
+        let ids = Set(readings.keys).union(sessions.map { $0.0 }).union(snapshots.keys)
+        return ids.sorted().compactMap { id in
+            let group = readings[id] ?? []
+            guard let agent = group.first?.agent ?? sessions.first(where: { $0.0 == id })?.2
+                ?? snapshots[id]?.agent else { return nil }
+            let name = group.compactMap(\.accountName).last
+                ?? sessions.first(where: { $0.0 == id })?.1 ?? snapshots[id]?.name ?? id
+            let limits = limitsByAgent(
+                group, credits: [:], plans: [:], creditsToday: [:], now: now
+            )[agent] ?? .none
+            return AccountLimitReport(
+                id: id, name: name, agent: agent, limits: limits, snapshot: snapshots[id]
+            )
+        }
     }
 
     /// Each agent's limits from its readings. A window that has already reset says nothing about
@@ -264,7 +325,8 @@ public struct GenerateUsageReport: Sendable {
         let current = readings.map { reading in
             LimitReading(
                 timestamp: reading.timestamp, agent: reading.agent, plan: reading.plan,
-                windows: reading.windows.filter { $0.resetsAt > now }
+                windows: reading.windows.filter { $0.resetsAt > now },
+                accountID: reading.accountID, accountName: reading.accountName
             )
         }
         let byAgent = Dictionary(grouping: current, by: \.agent)

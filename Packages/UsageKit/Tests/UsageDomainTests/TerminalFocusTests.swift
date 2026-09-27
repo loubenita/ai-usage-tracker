@@ -27,6 +27,7 @@ struct TerminalFocusTests {
             .run(program: "tmux", arguments: ["select-pane", "-t", "%24"]),
         ])
         #expect(TerminalFocus.canOpen(lead))
+        #expect(TerminalFocus.action(for: lead) == .session)
     }
 
     @Test func theTabToMoveIsTheOneUsedLastAndTiesGoToTheOneAlreadyThere() {
@@ -118,6 +119,7 @@ struct TerminalFocusTests {
     @Test func aTTYThatIsNotOneNeverReachesTheScript() {
         let odd = origin(.terminal, tty: "ttys004\" & do shell script \"x")
         #expect(TerminalFocus.plan(for: odd) == [.activate(bundleID: "com.apple.Terminal")])
+        #expect(TerminalFocus.action(for: odd) == .application(.terminal))
         #expect(TerminalFocus.safeTTY("/dev/ttys004") == "/dev/ttys004")
         #expect(TerminalFocus.safeTTY("ttys004") == "/dev/ttys004")
         #expect(TerminalFocus.safeTTY("console") == nil)
@@ -127,11 +129,15 @@ struct TerminalFocusTests {
         #expect(TerminalFocus.plan(for: origin(.warp)) == [.activate(bundleID: "dev.warp.Warp-Stable")])
         #expect(TerminalFocus.plan(for: origin(.iterm)) == [.activate(bundleID: "com.googlecode.iterm2")])
         #expect(TerminalFocus.plan(for: origin(.ghostty)) == [.activate(bundleID: "com.mitchellh.ghostty")])
+        #expect(TerminalFocus.action(for: origin(.warp)) == .application(.warp))
+        #expect(TerminalFocus.action(for: origin(.iterm)) == .application(.iterm))
+        #expect(TerminalFocus.action(for: origin(.ghostty)) == .application(.ghostty))
     }
 
     @Test func anUnknownTerminalHasNoOpenButton() {
         #expect(TerminalFocus.plan(for: origin(.unknown)).isEmpty)
         #expect(!TerminalFocus.canOpen(origin(.unknown)))
+        #expect(TerminalFocus.action(for: origin(.unknown)) == nil)
         // tmux with neither a known pane nor a known terminal has nothing to open either.
         #expect(!TerminalFocus.canOpen(origin(.tmux)))
     }

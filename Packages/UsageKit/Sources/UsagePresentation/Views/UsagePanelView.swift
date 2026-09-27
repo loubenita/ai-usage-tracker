@@ -7,6 +7,7 @@ struct UsagePanelView: View {
     let model: UsagePanelModel
     let onSelectAgent: (AgentFilter) -> Void
     let onSelectPeriod: (UsagePeriod) -> Void
+    let onSelectBucket: (Date) -> Void
     let onRefresh: () -> Void
 
     var body: some View {
@@ -16,7 +17,7 @@ struct UsagePanelView: View {
             periodRow
             switch model.content {
             case .all(let all): AllAgentsView(model: all)
-            case .agent(let agent): AgentUsageView(model: agent)
+            case .agent(let agent): AgentUsageView(model: agent, onSelectBucket: onSelectBucket)
             }
         }
         .glassPanel()
@@ -254,6 +255,7 @@ private struct TimeRow: View {
 
 private struct AgentUsageView: View {
     let model: AgentUsageModel
+    let onSelectBucket: (Date) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -285,7 +287,7 @@ private struct AgentUsageView: View {
                 }
             }
             if let chart = model.chart {
-                ChartView(model: chart, agent: model.agent)
+                ChartView(model: chart, agent: model.agent, onSelect: onSelectBucket)
             }
             if !model.models.isEmpty || !model.whereRows.isEmpty {
                 columns.sectionDivider()
@@ -329,18 +331,34 @@ private struct AgentUsageView: View {
 private struct ChartView: View {
     let model: ChartModel
     let agent: Agent
+    let onSelect: (Date) -> Void
 
     var body: some View {
-        let barWidth: CGFloat = model.bars.count > 4 ? 32 : 64
         VStack(alignment: .leading, spacing: 6) {
             CapsHeader(title: model.title, trailing: model.caption)
+            chartColumns
+        }
+    }
+
+    private var chartHeight: CGFloat { model.bars.count > 4 ? 56 : 48 }
+    private var barWidth: CGFloat { model.bars.count > 4 ? 32 : 64 }
+
+    /// A transparent, full-height control sits over each bar and its visible label. That gives
+    /// the whole column one action and one accessibility element, instead of separate controls
+    /// for the bar and label.
+    private var chartColumns: some View {
+        VStack(spacing: 0) {
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(model.bars.indices, id: \.self) { index in
                     if index > 0 { Spacer(minLength: 0) }
                     let bar = model.bars[index]
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(bar.isBusiest ? Theme.agent(agent) : bar.isCurrent ? Theme.primary : Theme.lift(0.35))
+                        .fill(bar.isSelected ? Theme.agent(agent) : bar.isBusiest ? Theme.agent(agent) : bar.isCurrent ? Theme.primary : Theme.lift(0.35))
                         .frame(width: barWidth, height: max(chartHeight * bar.fraction, 4))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(bar.isSelected ? Theme.primary : .clear, lineWidth: bar.isSelected ? 2 : 0)
+                        }
                 }
             }
             .frame(height: chartHeight, alignment: .bottom)
@@ -358,9 +376,18 @@ private struct ChartView: View {
                 }
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(model.title.capitalized): \(model.caption)")
+        .overlay {
+            HStack(spacing: 0) {
+                ForEach(model.bars.indices, id: \.self) { index in
+                    let bar = model.bars[index]
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .clickable("Show \(bar.label)") { onSelect(bar.start) }
+                        .accessibilityLabel("Show \(bar.label)\(bar.isSelected ? ", selected" : "")")
+                        .accessibilityAddTraits(bar.isSelected ? .isSelected : [])
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
     }
-
-    private var chartHeight: CGFloat { model.bars.count > 4 ? 56 : 48 }
 }

@@ -253,4 +253,31 @@ struct PeriodUsageTests {
         // Yesterday's one reply has no gap to measure; today has the 37 minutes.
         #expect(week.buckets.map(\.workingTime) == [0, 37 * 60])
     }
+
+    @Test func aSelectedBucketKeepsOnlyItsOwnModelsWorkAndUsage() throws {
+        let twoDaysAgo = today.addingTimeInterval(-2 * 86_400)
+        let yesterday = today.addingTimeInterval(-86_400)
+        let selectedTurns = turns + [
+            turn(.claudeCode, "old", minutesAgo: 24 * 60 - 5, tokens: 1, cost: 0, tag: app)
+        ]
+        let week = PeriodUsageBuilder.make(
+            .week,
+            turns: selectedTurns,
+            start: twoDaysAgo,
+            bucketStarts: [twoDaysAgo, yesterday, today],
+            openAgents: []
+        )
+        let yesterdayUsage = try #require(week.selecting(bucketStart: yesterday))
+        // Yesterday has Claude's own work only: it must not inherit today's Codex or Kiro usage.
+        #expect(yesterdayUsage.agents.map(\.agent) == [.claudeCode])
+        #expect(yesterdayUsage.usage(of: .claudeCode)?.tokens == 100_000)
+        #expect(yesterdayUsage.byWork.map(\.tag) == [app])
+        #expect(yesterdayUsage.byModel.map(\.model) == ["m"])
+
+        let empty = try #require(week.selecting(bucketStart: twoDaysAgo))
+        // An empty day is empty detail, never the full week's totals.
+        #expect(empty.agents.isEmpty)
+        #expect(empty.byWork.isEmpty)
+        #expect(empty.byModel.isEmpty)
+    }
 }

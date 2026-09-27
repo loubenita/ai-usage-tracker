@@ -44,6 +44,7 @@ final class UsageHistory: Sendable {
 
     private let state = Mutex(State())
     private let claudeDirectory: String
+    private let discoversClaudeProfiles: Bool
     private let homeDirectory: String
     private let codex: CodexFiles
     private let kiro: KiroFiles
@@ -62,11 +63,13 @@ final class UsageHistory: Sendable {
         claudeDirectory: String,
         codex: CodexFiles,
         kiro: KiroFiles,
+        discoversClaudeProfiles: Bool = true,
         minimumWorkingTime: TimeInterval = UsualRate.minimumWorkingTime,
         cachePath: String? = nil
     ) {
         self.homeDirectory = homeDirectory
         self.claudeDirectory = claudeDirectory
+        self.discoversClaudeProfiles = discoversClaudeProfiles
         self.codex = codex
         self.kiro = kiro
         self.minimumWorkingTime = minimumWorkingTime
@@ -78,6 +81,13 @@ final class UsageHistory: Sendable {
             subagentTranscripts.restore(cache.subagentTranscripts)
             rollouts.restore(cache.rollouts)
         }
+    }
+
+    /// The most recently completed history snapshot without scheduling another disk scan.
+    /// The lightweight open-session refresh uses this so it cannot wake the month reader or
+    /// rewrite the large cache every few seconds.
+    func latest() -> Snapshot {
+        state.withLock { $0.snapshot }
     }
 
     /// The last history read, starting a new read in the background when one is due.
@@ -124,8 +134,20 @@ final class UsageHistory: Sendable {
         }
 
         // Claude Code: main transcripts, then sub-agents, named after their parent session.
-        let projects = claudeDirectory + "/projects"
-        let folders = files.list(projects).map { projects + "/" + $0 }
+        let log = files.data(ClaudeLimitsLog.path(homeDirectory: homeDirectory))
+        var profiles = discoversClaudeProfiles
+            ? ClaudeAccounts.profiles(homeDirectory: homeDirectory, log: log, files: files)
+            : []
+        if !profiles.contains(where: { $0.directory == claudeDirectory }) {
+            profiles.append(ClaudeAccounts.Profile(
+                directory: claudeDirectory,
+                name: ClaudeAccounts.name(for: claudeDirectory, homeDirectory: homeDirectory)
+            ))
+        }
+        let folders = profiles.flatMap { profile in
+            let projects = profile.directory + "/projects"
+            return files.list(projects).map { projects + "/" + $0 }
+        }
         let mains = folders.flatMap { files.files(in: $0, suffix: ".jsonl", changedSince: since) }
         mainTranscripts.keepOnly(Set(mains))
         for path in mains {

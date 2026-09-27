@@ -83,10 +83,11 @@ else
   capture rest 1-rest.build
   capture hover 2-hover.build
   capture open-session 3-open-session.build
+  capture open-session-details 3-session-details.build
   # The usage panel as frames 4 to 6 draw it: All on Today, Claude on Week, Cursor on Month.
   capture open-today 4-open-today.build
   capture open-week 5-open-week-claude.build --agent claude-code
   capture open-month 6-open-month-cursor.build --agent cursor
-  # Frame 7: the strip picked up, showing its handle where it was dragged to.
+  # Frame 7: the compact strip shifted to its drag position.
   capture drag 7-drag.build
 fi

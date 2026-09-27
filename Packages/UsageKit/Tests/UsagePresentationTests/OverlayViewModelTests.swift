@@ -74,6 +74,35 @@ struct OverlayViewModelTests {
         #expect(!viewModel.isOpen)
     }
 
+    @Test func usageDefaultsToTheCurrentBucketAndResetsWhenThePeriodChanges() async throws {
+        let viewModel = await makeViewModel()
+        viewModel.openUsage()
+        viewModel.usagePeriod = .week
+        let week = try #require(viewModel.overview)
+        let today = try #require(viewModel.report?.periods[.week]?.buckets.last?.start)
+        #expect(week.selectedBucketStart == today)
+
+        let earlierDay = try #require(viewModel.report?.periods[.week]?.buckets.first?.start)
+        viewModel.selectUsageBucket(earlierDay)
+        #expect(viewModel.selectedUsageBucketStart == earlierDay)
+        #expect(viewModel.overview?.selectedBucketStart == earlierDay)
+
+        viewModel.usagePeriod = .month
+        // The previous day's selection cannot leak into Month: it defaults to this week.
+        #expect(viewModel.selectedUsageBucketStart == nil)
+        #expect(viewModel.overview?.selectedBucketStart == viewModel.report?.periods[.month]?.buckets.last?.start)
+    }
+
+    @Test func aBucketSelectionSurvivesAReportRefresh() async throws {
+        let viewModel = await makeViewModel()
+        viewModel.openUsage()
+        viewModel.usagePeriod = .week
+        let selected = try #require(viewModel.report?.periods[.week]?.buckets.first?.start)
+        viewModel.selectUsageBucket(selected)
+        viewModel.refresh()
+        #expect(viewModel.overview?.selectedBucketStart == selected)
+    }
+
     @Test func sessionsThatStartAndEndAppearAndDisappearOnReload() async {
         let repository = ChangingRepository()
         let viewModel = OverlayViewModel(
@@ -106,8 +135,8 @@ struct OverlayViewModelTests {
 
         viewModel.pointerOverStrip(true)
         viewModel.beginStripDrag()
-        // It keeps its size while it is dragged, so the handle stays under the pointer.
-        #expect(viewModel.strip?.isExpanded == true)
+        // Dragging collapses the whole strip.
+        #expect(viewModel.strip?.isExpanded == false)
         viewModel.dragStrip(to: 100, limit: 300)
         #expect(viewModel.stripOffset == 100)
         // It cannot be dragged off the screen.
@@ -148,7 +177,7 @@ struct OverlayViewModelTests {
         )
         await viewModel.load()
         viewModel.click("s_img")
-        #expect(viewModel.panel?.canOpen == true)
+        #expect(viewModel.panel?.openAction == .terminal("Warp"))
         viewModel.openTerminal("s_img")
         #expect(opener.opened.map(\.terminal) == [.warp])
         // A session with no known terminal has nothing to open.
@@ -216,6 +245,10 @@ private actor CountingRepository: UsageRepository {
 @MainActor
 @Suite("Refreshing each part as often as it changes")
 struct RefreshScheduleTests {
+    @Test func liveSessionDiscoveryUsesTheSixSecondDefault() {
+        #expect(OverlayViewModel.defaultReloadInterval == 6)
+    }
+
     fileprivate func make(historyComplete: Bool = true) -> (OverlayViewModel, CountingRepository, Date) {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
@@ -231,7 +264,7 @@ struct RefreshScheduleTests {
         #expect(viewModel.totalsBuilds == 1)
         #expect(await repository.fullReads == 1)
         let month = viewModel.report?.month
-        // The one-second tick and the two-second read of the open sessions leave the totals be.
+        // The one-second tick and the six-second read of the open sessions leave the totals be.
         viewModel.refresh()
         viewModel.refresh()
         await viewModel.loadSessions()

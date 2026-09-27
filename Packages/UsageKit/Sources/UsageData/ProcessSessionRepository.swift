@@ -24,6 +24,7 @@ public struct ProcessSessionRepository: UsageRepository {
 
     private let source: any ProcessSource
     private let claudeDirectory: String
+    private let discoversClaudeProfiles: Bool
     private let timeZone: TimeZone
     private let usageSettings: UsageSettings
     private let files = FileAccess()
@@ -51,6 +52,7 @@ public struct ProcessSessionRepository: UsageRepository {
         self.source = source
         self.homeDirectory = homeDirectory
         self.claudeDirectory = claudeDirectory ?? homeDirectory + "/.claude"
+        self.discoversClaudeProfiles = claudeDirectory == nil
         self.timeZone = timeZone
         self.usageSettings = settings
         self.codex = CodexFiles(directory: homeDirectory + "/.codex")
@@ -58,7 +60,7 @@ public struct ProcessSessionRepository: UsageRepository {
         self.kiro = KiroFiles(directory: homeDirectory + "/.kiro/sessions/cli")
         self.history = UsageHistory(
             homeDirectory: homeDirectory, claudeDirectory: self.claudeDirectory, codex: codex, kiro: kiro,
-            cachePath: historyCachePath
+            discoversClaudeProfiles: self.discoversClaudeProfiles, cachePath: historyCachePath
         )
         self.kiroPlan = KiroPlanReader(homeDirectory: homeDirectory)
     }
@@ -78,7 +80,7 @@ public struct ProcessSessionRepository: UsageRepository {
     )
 
     /// A session's own files are read again at most this often by default; the process list,
-    /// which says which sessions are open, is read on every call.
+    /// which says which sessions are open, is read on every lightweight call.
     public static let defaultFilesInterval: TimeInterval = 6
     private let filesInterval: TimeInterval
 
@@ -107,7 +109,9 @@ public struct ProcessSessionRepository: UsageRepository {
         subagentTranscripts.keepOnly(live.subagentTranscripts)
         rollouts.keepOnly(live.rollouts)
 
-        let past = history.current(now: now)
+        // Only the slower totals refresh is allowed to schedule a history scan and cache save.
+        // The frequent session refresh consumes the last completed snapshot.
+        let past = includeHistory ? history.current(now: now) : history.latest()
         let inRange = { (date: Date) in date >= start && date <= end }
         // The history's copy of a live session's replies is replaced by the live one, which is
         // newer and carries the live session's id.
@@ -123,6 +127,7 @@ public struct ProcessSessionRepository: UsageRepository {
             limits: includeHistory ? Array(Set(past.limits + live.limits)) : live.limits,
             sessionEvents: live.events,
             capturedAt: now,
+            accountSnapshots: ClaudeAccountCache.read(homeDirectory: homeDirectory, files: files, now: now),
             usualRates: past.usualRates,
             isHistoryComplete: past.isComplete,
             creditsThisMonth: past.creditsThisMonth,
@@ -151,6 +156,8 @@ public struct ProcessSessionRepository: UsageRepository {
         var agentSessionID: String?
         var transcriptPath: String?
         var sessionName: String?
+        var accountName: String?
+        var accountID: String?
         var turns: [Turn] = []
         var limits: [LimitReading] = []
         var state: SessionState?
@@ -160,7 +167,7 @@ public struct ProcessSessionRepository: UsageRepository {
     }
 
     private func read(
-        _ found: TerminalAgentProcess, claudeSessions: [ClaudeSessionFile], tmuxHost: TerminalApp?, now: Date,
+        _ found: TerminalAgentProcess, claudeSessions: [DiscoveredClaudeSession], tmuxHost: TerminalApp?, now: Date,
         into live: inout LiveSessions
     ) {
         let process = found.process
@@ -174,9 +181,13 @@ public struct ProcessSessionRepository: UsageRepository {
             live.claim(cached.claimed)
         } else {
             let claude = found.agent == .claudeCode
-                ? ClaudeSessionIndex.file(forPID: process.pid, startedAt: process.startedAt, in: claudeSessions)
+                ? claudeSessions.first { candidate in
+                    ClaudeSessionIndex.file(
+                        forPID: process.pid, startedAt: process.startedAt, in: [candidate.file]
+                    ) != nil
+                }
                 : nil
-            folder = source.workingDirectory(of: process.pid) ?? claude?.cwd ?? homeDirectory
+            folder = source.workingDirectory(of: process.pid) ?? claude?.file.cwd ?? homeDirectory
             work = WorkNamer(files: files, homeDirectory: homeDirectory).work(folder: folder, branch: nil)
             let before = live.claimed
             switch found.agent {
@@ -218,6 +229,8 @@ public struct ProcessSessionRepository: UsageRepository {
                 agentSessionID: agentFiles.agentSessionID,
                 transcriptPath: agentFiles.transcriptPath,
                 sessionName: agentFiles.sessionName,
+                accountName: agentFiles.accountName,
+                accountID: agentFiles.accountID,
                 isHomeFolder: URL(fileURLWithPath: folder).standardizedFileURL.path
                     == URL(fileURLWithPath: homeDirectory).standardizedFileURL.path,
                 tmux: found.terminal == .tmux ? agentFiles.tmux : nil,
@@ -255,9 +268,11 @@ public struct ProcessSessionRepository: UsageRepository {
     // MARK: - Each agent's files
 
     private func claudeFiles(
-        _ claude: ClaudeSessionFile, sessionID: String, work: Work, now: Date, live: inout LiveSessions
+        _ discovered: DiscoveredClaudeSession, sessionID: String, work: Work, now: Date,
+        live: inout LiveSessions
     ) -> AgentFiles {
-        let path = transcriptPath(for: claude)
+        let claude = discovered.file
+        let path = transcriptPath(for: discovered)
         let transcript = path.flatMap { path in
             live.claudeTranscripts.insert(path)
             return transcripts.transcript(at: path)
@@ -273,6 +288,8 @@ public struct ProcessSessionRepository: UsageRepository {
             agentSessionID: claude.sessionId,
             transcriptPath: path,
             sessionName: claude.chosenName,
+            accountName: discovered.profile.name,
+            accountID: discovered.profile.directory,
             turns: transcript?.turns(sessionID: sessionID, work: work) ?? [],
             state: state,
             snapshot: SessionSnapshot(
@@ -364,22 +381,52 @@ public struct ProcessSessionRepository: UsageRepository {
             }
     }
 
-    private func readClaudeSessionFiles() -> [ClaudeSessionFile] {
-        let directory = claudeDirectory + "/sessions"
-        return files.list(directory)
-            .filter { $0.hasSuffix(".json") }
-            .compactMap { files.data(directory + "/" + $0).flatMap(ClaudeSessionIndex.parse) }
+    private struct DiscoveredClaudeSession {
+        let file: ClaudeSessionFile
+        let profile: ClaudeAccounts.Profile
     }
 
-    private func transcriptPath(for session: ClaudeSessionFile) -> String? {
-        let projects = claudeDirectory + "/projects"
+    private func claudeProfiles() -> [ClaudeAccounts.Profile] {
+        if !discoversClaudeProfiles {
+            return [ClaudeAccounts.Profile(
+                directory: claudeDirectory,
+                name: ClaudeAccounts.name(for: claudeDirectory, homeDirectory: homeDirectory)
+            )]
+        }
+        let log = files.data(ClaudeLimitsLog.path(homeDirectory: homeDirectory))
+        var profiles = ClaudeAccounts.profiles(homeDirectory: homeDirectory, log: log, files: files)
+        if !profiles.contains(where: { $0.directory == claudeDirectory }) {
+            profiles.append(ClaudeAccounts.Profile(
+                directory: claudeDirectory,
+                name: ClaudeAccounts.name(for: claudeDirectory, homeDirectory: homeDirectory)
+            ))
+        }
+        return profiles
+    }
+
+    private func readClaudeSessionFiles() -> [DiscoveredClaudeSession] {
+        claudeProfiles().flatMap { profile in
+            let directory = profile.directory + "/sessions"
+            return files.list(directory)
+                .filter { $0.hasSuffix(".json") }
+                .compactMap { name -> DiscoveredClaudeSession? in
+                    files.data(directory + "/" + name)
+                        .flatMap(ClaudeSessionIndex.parse)
+                        .map { DiscoveredClaudeSession(file: $0, profile: profile) }
+                }
+        }
+    }
+
+    private func transcriptPath(for discovered: DiscoveredClaudeSession) -> String? {
+        let projects = discovered.profile.directory + "/projects"
         return ClaudeSessionIndex.transcriptPath(
-            for: session,
+            for: discovered.file,
             projectsDirectory: projects,
             projectFolders: { files.list(projects) },
             fileExists: files.exists
         )
     }
+
 }
 
 /// The files each open session uses, tagged by kind so each store keeps its own.

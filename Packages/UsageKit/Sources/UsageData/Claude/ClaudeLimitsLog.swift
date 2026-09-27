@@ -15,6 +15,16 @@ enum ClaudeLimitsLog {
         homeDirectory + "/Library/Application Support/AIUsageTracker/claude-limits.jsonl"
     }
 
+    /// Last known display name for each registered config directory.
+    static func accounts(in data: Data) -> [String: String] {
+        data.split(separator: 0x0A).reduce(into: [:]) { result, line in
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let id = object["account_id"] as? String,
+                  let name = object["account_name"] as? String else { return }
+            result[id] = name
+        }
+    }
+
     /// Every reading in the log taken at or after `since`.
     static func readings(in data: Data, since: Date) -> [LimitReading] {
         data.split(separator: 0x0A).compactMap { line in
@@ -33,7 +43,11 @@ enum ClaudeLimitsLog {
                     return LimitWindowReading(kind: kind, usedPercent: used, resetsAt: Date(timeIntervalSince1970: resets))
                 }
             }
-            return windows.isEmpty ? nil : LimitReading(timestamp: timestamp, agent: .claudeCode, plan: nil, windows: windows)
+            return windows.isEmpty ? nil : LimitReading(
+                timestamp: timestamp, agent: .claudeCode, plan: nil, windows: windows,
+                accountID: object["account_id"] as? String,
+                accountName: object["account_name"] as? String
+            )
         }
     }
 }

@@ -22,7 +22,7 @@ Each running Claude Code session has a small file in `~/.claude/sessions/` that 
 - **Context.** Everything the latest reply read, out of the model's context window.
 - **Cost.** From the Claude API list prices. A model not in the price table has its cost left out rather than guessed.
 - **Pace.** Tokens per working hour, leaving out cache reads. A cache read is the whole conversation read again for each reply, so it grows with the length of the conversation, not with the work done. In one long session, cache reads were 39.3M of 39.8M tokens. Working time adds up the gaps between replies and leaves out any gap longer than 5 minutes, since that is time spent reading or away.
-- **Your usual pace.** The same measure over all your main Claude Code transcripts from the last 7 days. It is read in the background with the rest of the week's history, and refreshed every minute. The comparison is left out until there is at least an hour of work to compare with. Each agent has its own usual pace, so a Codex session is compared with your Codex sessions.
+- **Your usual pace.** The same measure over all your main Claude Code transcripts from the last 7 days. It is read in the background with the rest of the week's history, and refreshed with the totals every 10 minutes. The comparison is left out until there is at least an hour of work to compare with. Each agent has its own usual pace, so a Codex session is compared with your Codex sessions.
 - **When the context will be full.** How fast the context has grown since it was last compacted, carried forward from now.
 
 Transcripts are read as they grow: each refresh reads only the lines added since the last one.
@@ -67,7 +67,7 @@ Today, This week and Month count every session since the 1st of the month, or of
 | First launch, with no cache | 66 s in the Debug build (38 s in Release) |
 | Every launch after, from the cache | 1.6 s |
 
-Only on the very first launch, before any cache exists, do the panels say the history is still being read, so the totals are too low for now; the totals are rebuilt every 10 seconds until it is done. After that the history is read again every minute, taking only what the files gained, and saved again when anything grew, while the totals are rebuilt from it every 10 minutes.
+Only on the very first launch, before any cache exists, do the panels say the history is still being read, so the totals are too low for now; the totals are rebuilt every 10 seconds until it is done. After that the history is read and saved with the totals every 10 minutes. The six-second live-session refresh reuses the latest history snapshot, so it never rewrites the large cache.
 
 The totals are built off the main thread, so the overlay stays responsive while they are. Before this, the app rebuilt the whole month on the main thread every second. On the Mac this was built on, on 22 September, with seven sessions open, that took the app's CPU from 67% on average to 6%. The share of the main thread's time spent rebuilding went from 63% to under 1%.
 
@@ -93,8 +93,8 @@ If you already have a status line, keep it by setting `AIUT_STATUSLINE_NEXT` to 
 
 The table of what each agent gives is in the [README](../README.md#what-each-agent-gives).
 
-- **Each agent's ring has its own colour,** so you can tell a Codex session from a Claude one at a glance. The colours are all cool ones, so none of them can be mistaken for the amber "waiting for you" dot or the red "context nearly full" ring, which still take over when they apply.
-- **The ring's number is current context used,** from the same reading as its fill. The expanded strip also names the agent, project and task, and includes the first ask when the agent records it. The larger cumulative token count appears only as `Total tokens` in the session panel.
+- **Each agent has a distinct mark and colour,** so provider identity remains visible even when a nearly full ring turns red. The provider name remains in the accessibility label.
+- **The ring's number is current context used,** from the same reading as its fill. The 168pt expanded strip keeps a short task name beside the provider mark. Project, model, branch and first ask live in the selected session panel. The larger cumulative token count appears only as `Total tokens` there.
 - **Antigravity** runs as a desktop app, not in a terminal. Starting a conversation in it means typing into its window. It saves its conversations in `~/.gemini/antigravity/conversations/` as encrypted files: they look completely random, with no readable text, so the app cannot read their usage.
 
 - **The limits list shows every window every agent shares,** as a share used rather than left: "Claude 5-hour 62%, frees up 16:40", "Codex week 95%, frees up Thu". A window at 85% or more turns amber, so the one about to run out stands out. Kiro's monthly plan, in credits, is a row like any other.
@@ -103,7 +103,7 @@ The table of what each agent gives is in the [README](../README.md#what-each-age
 - **Anything without data is left out, not shown as 0.** A number, row or whole section the agent did not report is hidden: a Codex session shows no Spent, a session that started no sub-agents has no sub-agents section, and an agent with no limits says "no data" once instead of drawing empty bars. In the table, where a column must stay for the other agents, the cell says "n/a".
 
 - **Cost** is only shown where the price is known. The app has the Claude API list prices. It has no prices for Codex models, and Cursor and Kiro bill by plan and credits, so their cost is left out rather than guessed.
-- **The strip's limit** is the limit of the agent with the most sessions open. A session's panel lists its own agent's limits only: a Codex panel never shows Claude's 5-hour limit.
+- **Account limits live in Usage.** A selected session's panel contains only facts attributable to that session; shared five-hour, weekly and plan limits stay in the Usage panel.
 - **Monthly limits.** Only Kiro's plan is monthly. Claude and Codex report none, so they have no monthly bar on real data.
 - **Budgets.** There is no setting for a daily budget yet, so on real data Today shows no budget and the week chart has no budget line. The made-up data has $9 and 2.6M-token budgets, to show how they would look.
 - **Where the time went** lists the biggest pieces of work by working time — the gaps between replies, up to five minutes each — and adds up the rest in one row, such as "4 more". Time is used rather than cost, so agents whose price is unknown count for as much as the others.

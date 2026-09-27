@@ -46,21 +46,22 @@ struct OverlayPresenterTests {
         #expect(strip.items.allSatisfy { $0.highlight == .none })
     }
 
-    @Test func theExpandedStripIdentifiesAgentProjectTaskAndFirstAsk() async throws {
+    @Test func theExpandedStripKeepsOnlyTheShortTaskIdentity() async throws {
         let strip = presenter.strip(try await Self.fakeReport(), hovered: nil, open: nil, acknowledged: [])
-        #expect(strip.items.map(\.agentName) == ["Claude", "Claude", "Codex"])
-        #expect(strip.items.map(\.project) == ["Marketing Studio", "Marketing Studio", "OpenKitchen"])
         #expect(strip.items.map(\.title) == ["Video generation", "Image generation", "Bug fixes"])
-        #expect(strip.items.map(\.firstAsk) == [nil, "Add retry to the image generation call", nil])
+        // Provider, project and first ask remain available to assistive technology and in the
+        // selected session panel without making every strip row tall and wide.
+        #expect(strip.items[1].accessibilityLabel.contains("Claude"))
+        #expect(strip.items[1].accessibilityLabel.contains("Marketing Studio"))
         #expect(strip.items[1].accessibilityLabel.contains("Add retry to the image generation call"))
     }
 
-    @Test func theRestingStripListsTheSessionsThatWereBusyMostRecently() async throws {
+    @Test func theRestingStripRanksSpendAndContext() async throws {
         let strip = presenter.strip(try await Self.fakeReport(), hovered: nil, open: nil, acknowledged: [])
-        // The strip keeps the order the sessions started in; each item says how recent it is.
+        // The expanded strip keeps start order; the collapsed strip uses priority.
         #expect(strip.items.map(\.id) == ["s_vid", "s_img", "s_bug"])
-        // Bug fixes replied at 14:30, Image generation stopped at 14:28, Video at 13:20.
-        #expect(strip.items.map(\.recency) == [2, 1, 0])
+        #expect(strip.items.sorted { $0.priority < $1.priority }.map(\.id)
+            == ["s_bug", "s_vid", "s_img"])
     }
 
     @Test func hoverAndOpenHighlights() async throws {
@@ -91,10 +92,10 @@ struct OverlayPresenterTests {
 
     @Test func theSessionPanelMatchesFrame3() async throws {
         let panel = try #require(presenter.panel(try await Self.fakeReport(), sessionID: "s_img"))
-        #expect(panel.subtitle == "Claude · Marketing Studio")
+        #expect(panel.subtitle == "Marketing Studio")
         #expect(panel.title == "Image generation")
         #expect(panel.agent == .claudeCode)
-        #expect(panel.canOpen)
+        #expect(panel.openAction == .terminal("Warp"))
         #expect(panel.status == StatusModel(kind: .waiting, text: "Waiting for your reply · 4m", place: "Warp"))
         #expect(panel.stats == [
             StatModel(label: "Total spent", value: "$1.10"), StatModel(label: "Total tokens", value: "280k"),
@@ -102,11 +103,10 @@ struct OverlayPresenterTests {
         ])
         #expect(panel.context?.title == "Context 34%")
         #expect(panel.context?.detail == "68k of 200k · full ~15:20")
-        #expect(panel.limit?.title == "5-hour limit 62%")
-        #expect(panel.limit?.detail == "9% this session · resets 16:40")
-        #expect(panel.limit?.fraction == 0.62)
         // The session's own replies and its sub-agents' together.
-        #expect(panel.tokenMix.map(\.label) == ["In 52k", "Out 14k", "Cache read 200k", "Cache write 14k"])
+        #expect(panel.tokenMix.map(\.label) == ["Input", "Output", "Cache read", "Cache write"])
+        #expect(panel.tokenMix.map(\.value) == ["52k", "14k", "200k", "14k"])
+        #expect(panel.tokenMixNote == "Input is new, uncached text. Cache read is context reused from earlier turns.")
         #expect(panel.subagents == SubagentsModel(
             title: "SUB-AGENT RUNS · 6",
             inclusion: "Included in session totals",
@@ -133,8 +133,14 @@ struct OverlayPresenterTests {
     }
 
     /// A session detected in a terminal, with the given turns and no limits.
-    func detected(turns: [Turn], terminal: TerminalApp = .warp, snapshot: SessionSnapshot? = nil) -> UsageReport {
-        let origin = SessionOrigin(pid: 3857, tty: "ttys002", terminal: terminal, folder: "/Users/me/ai-usage-tracker")
+    func detected(
+        turns: [Turn], terminal: TerminalApp = .warp, snapshot: SessionSnapshot? = nil,
+        accountName: String? = nil
+    ) -> UsageReport {
+        let origin = SessionOrigin(
+            pid: 3857, tty: "ttys002", terminal: terminal,
+            folder: "/Users/me/ai-usage-tracker", accountName: accountName
+        )
         let tag = WorkTag(project: "ai-usage-tracker", concern: "main")
         let start = Date(timeIntervalSince1970: 1_790_000_000)
         var events = [SessionEvent(
@@ -153,15 +159,25 @@ struct OverlayPresenterTests {
         return GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 5400)
     }
 
+    @Test func theSessionShowsItsAccountWhenKnown() throws {
+        let report = detected(turns: [], accountName: "Work")
+        let strip = presenter.strip(report, hovered: nil, open: nil, acknowledged: [])
+        #expect(strip.items.first?.account == "Work")
+        #expect(strip.items.first?.accessibilityLabel.contains("account Work") == true)
+        let panel = try #require(presenter.panel(report, sessionID: "claude-code-3857"))
+        #expect(panel.subtitle == "ai-usage-tracker · Work")
+        #expect(panel.details.first { $0.label == "Account" }?.value == "Work")
+    }
+
     @Test func whatTheAgentDidNotReportIsLeftOutNotShownAsZero() throws {
         let panel = try #require(presenter.panel(detected(turns: []), sessionID: "claude-code-3857"))
         // On main, the branch says nothing about the task, so the folder names it.
         #expect(panel.title == "ai-usage-tracker")
-        // No replies yet: no cost, tokens or turns; no context, limit, token mix, pace or model.
+        // No replies yet: no cost, tokens or turns; no context, token mix, pace or model.
         #expect(panel.stats == [StatModel(label: "Active", value: "1h 30m")])
         #expect(panel.context == nil)
-        #expect(panel.limit == nil)
         #expect(panel.tokenMix.isEmpty)
+        #expect(panel.tokenMixNote == nil)
         #expect(panel.subagents == nil)
         #expect(panel.details == [
             DetailRowModel(label: "Started", value: "15:13 · open 1h 30m"),
@@ -214,12 +230,11 @@ struct OverlayPresenterTests {
         let panel = try #require(presenter.panel(report, sessionID: "k"))
         #expect(panel.stats.first == StatModel(label: "Credits", value: "0.8"))
         #expect(!panel.stats.contains { $0.label == "Total tokens" })
-        // Its plan is its tightest limit, and it resets at midnight on the 1st.
-        #expect(panel.limit?.title == "Plan 42%")
-        #expect(panel.limit?.detail == "resets 1 Oct")
+        // Account plan limits are deliberately absent from a selected-session panel.
+        #expect(panel.details.allSatisfy { !$0.label.localizedCaseInsensitiveContains("plan") })
     }
 
-    @Test func aPanelShowsOnlyItsOwnAgentsLimit() throws {
+    @Test func aPanelDoesNotMixAccountLimitsIntoEitherSession() throws {
         let start = Date(timeIntervalSince1970: 1_790_000_000)
         let tag = WorkTag(project: "app", concern: "main")
         let event = { (agent: Agent, id: String) in
@@ -241,14 +256,17 @@ struct OverlayPresenterTests {
         )
         let settings = UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20)
         let report = GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 60)
-        // The week, at 71%, is closer to running out than the 5-hour window at 62%; this
-        // session's share is known only for the 5-hour window, so none is given.
         let claude = try #require(presenter.panel(report, sessionID: "a"))
-        #expect(claude.limit?.title == "Week limit 71%")
-        #expect(claude.limit?.detail == "resets Thu 15:13")
-        #expect(claude.limit?.highlightFraction == nil)
         let codex = try #require(presenter.panel(report, sessionID: "b"))
-        #expect(codex.limit == nil)
+        for panel in [claude, codex] {
+            let sessionText = ([panel.title, panel.subtitle, panel.status.text]
+                + panel.stats.flatMap { [$0.label, $0.value] }
+                + panel.details.flatMap { [$0.label, $0.value] })
+                .joined(separator: " ").lowercased()
+            #expect(!sessionText.contains("limit"))
+            #expect(!sessionText.contains("reset"))
+            #expect(!sessionText.contains("plan"))
+        }
     }
 
     @Test func theSubagentShareIsOfTheSpendOrOfTheTokensWithoutACost() throws {
