@@ -5,7 +5,7 @@ public enum StripLayout {
     /// The expanded strip is a compact provider mark, task and context ring. Session and usage
     /// panels keep the wider reading column beside it.
     public static let expandedWidth: CGFloat = 236
-    public static let restingWidth: CGFloat = 32
+    public static let restingWidth: CGFloat = 36
     public static let panelWidth: CGFloat = 430
     /// The inset at the screen edge and room for the soft glass shadow.
     public static let overlayEdgeInset: CGFloat = 8
@@ -21,13 +21,32 @@ public enum StripLayout {
     /// The pointer moves this far with the button down before the strip is picked up. Until
     /// then nothing changes, so a click on the handle leaves the strip as it was.
     public static let dragThreshold: CGFloat = 4
-    /// The compact rail is a 52pt edge tab: handle, then one count band.
+    /// The compact rail shows a handle and the two highest-priority session context rings.
     public static let handleBand: CGFloat = 16
     public static let handleHitWidth: CGFloat = restingWidth
     public static let handleMarkWidth: CGFloat = 14
-    public static let compactCountBand: CGFloat = 20
+    public static let compactSessionLimit = 2
+    public static let compactRingBand: CGFloat = 24
+    public static let compactRingSpacing: CGFloat = 4
     public static let compactVerticalInset: CGFloat = 8
-    public static let compactHeight = handleBand + compactCountBand + 2 * compactVerticalInset
+    /// Maximum height when both compact indicators are present; a single session is shorter.
+    public static let compactHeight = handleBand
+        + CGFloat(compactSessionLimit) * compactRingBand
+        + CGFloat(compactSessionLimit - 1) * compactRingSpacing
+        + 2 * compactVerticalInset
+    /// Small pointer jitter inside this radius does not restart the dwell timer.
+    public static let compactHoverMovementThreshold: CGFloat = 4
+
+    /// The compact tab exposes the sessions with the highest presenter priority first.
+    static func compactItems(from items: [StripItemModel]) -> [StripItemModel] {
+        Array(items.sorted { $0.priority < $1.priority }.prefix(compactSessionLimit))
+    }
+
+    /// An empty tab still reserves one band for its usage affordance.
+    static func compactContentHeight(for sessionCount: Int) -> CGFloat {
+        let indicators = min(max(sessionCount, 1), compactSessionLimit)
+        return CGFloat(indicators) * compactRingBand + CGFloat(indicators - 1) * compactRingSpacing
+    }
     /// The screenshot-only drag state starts before SwiftUI has measured the resting strip.
     /// This keeps a representative 240pt expanded strip visibly above centre even then.
     public static let forcedDragOffset: CGFloat = -240

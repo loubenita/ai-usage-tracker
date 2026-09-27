@@ -9,7 +9,7 @@ struct StripView: View {
     let dragOrigin: CGFloat
     let isDragging: Bool
     let restHeight: CGFloat
-    let onPointerMoved: () -> Void
+    let onPointerMoved: (CGPoint) -> Void
     let onPointerLeft: () -> Void
     let onHover: (_ sessionID: String, _ inside: Bool) -> Void
     let onClick: (String) -> Void
@@ -31,7 +31,7 @@ struct StripView: View {
                     ExpandedContents(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage)
                         .transition(.opacity)
                 } else {
-                    RestingContents(sessionCount: model.items.count)
+                    RestingContents(model: model, onUsage: onUsage)
                         .transition(.opacity)
                 }
             }
@@ -40,7 +40,7 @@ struct StripView: View {
             .contentShape(.rect)
             .onContinuousHover { phase in
                 switch phase {
-                case .active: onPointerMoved()
+                case .active(let location): onPointerMoved(location)
                 case .ended: onPointerLeft()
                 }
             }
@@ -96,23 +96,42 @@ struct StripView: View {
 }
 
 private struct RestingContents: View {
-    let sessionCount: Int
+    let model: StripModel
+    let onUsage: () -> Void
 
     var body: some View {
-        Text(sessionCount, format: .number)
-            .font(TypeScale.font(TypeScale.caption, .semibold))
-            .foregroundStyle(Theme.primary)
-            .monospacedDigit()
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .frame(maxWidth: .infinity)
-            .frame(height: StripLayout.compactCountBand)
-            .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var accessibilityLabel: String {
-        let noun = sessionCount == 1 ? "session" : "sessions"
-        return "\(sessionCount) active \(noun)"
+        VStack(spacing: StripLayout.compactRingSpacing) {
+            ForEach(StripLayout.compactItems(from: model.items)) { item in
+                SessionRing(model: item.ring)
+                    .scaleEffect(2.0 / 3.0)
+                    .frame(width: StripLayout.compactRingBand, height: StripLayout.compactRingBand)
+                    .overlay(alignment: .bottomLeading) {
+                        AgentMark(agent: item.ring.agent)
+                            .scaleEffect(0.4)
+                            .frame(width: 10, height: 10)
+                            .offset(x: -1, y: 1)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if item.needsUser {
+                            NeedsYouDot(pulses: item.pulses, diameter: 7).offset(x: 1, y: -1)
+                        }
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(item.accessibilityLabel)
+            }
+            if model.items.isEmpty {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.secondary)
+                    .frame(width: StripLayout.compactRingBand, height: StripLayout.compactRingBand)
+                    .contentShape(.rect)
+                    .onTapGesture(perform: onUsage)
+                    .help("Open usage")
+                    .accessibilityLabel("No active sessions. Open usage")
+                    .accessibilityAddTraits(.isButton)
+            }
+        }
+        .frame(height: StripLayout.compactContentHeight(for: model.items.count))
     }
 }
 

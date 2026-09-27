@@ -1,15 +1,27 @@
 import CoreGraphics
 import Testing
+import UsageDomain
 @testable import UsagePresentation
 
 @Suite("Strip layout")
 struct StripLayoutTests {
     @Test func theExpandedListAndCompactTabStaySmall() {
         #expect(StripLayout.expandedWidth == 236)
-        #expect(StripLayout.restingWidth == 32)
-        #expect(StripLayout.compactHeight == 52)
-        #expect(StripLayout.restingOverlayWidth == 72)
+        #expect(StripLayout.restingWidth == 36)
+        #expect(StripLayout.compactSessionLimit == 2)
+        #expect(StripLayout.compactHeight == 84)
+        #expect(StripLayout.compactHeight < 120)
+        #expect(StripLayout.restingOverlayWidth == 76)
         #expect(StripLayout.expandedOverlayWidth == 276)
+        #expect(StripLayout.compactContentHeight(for: 0) == 24)
+        #expect(StripLayout.compactContentHeight(for: 1) == 24)
+        #expect(StripLayout.compactContentHeight(for: 2) == 52)
+    }
+
+    @Test func compactTabUsesTheTwoHighestPrioritySessions() {
+        let items = [item(id: "third", priority: 2), item(id: "first", priority: 0), item(id: "second", priority: 1)]
+
+        #expect(StripLayout.compactItems(from: items).map(\.id) == ["first", "second"])
     }
 
     // MARK: - Dragging
@@ -60,9 +72,9 @@ struct StripLayoutTests {
     }
 
     @Test func theDragHandleStaysFullyVisibleAtTheScreenEdge() {
-        #expect(StripLayout.handleHitWidth == 32)
+        #expect(StripLayout.handleHitWidth == 36)
         #expect(StripLayout.handleMarkWidth == 14)
-        #expect(StripLayout.handleHitWidth / 2 == 16)
+        #expect(StripLayout.handleHitWidth / 2 == 18)
     }
 
     // MARK: - Staying on the screen
@@ -146,5 +158,14 @@ struct StripLayoutTests {
         // Taller than the screen: it fills the height and scrolls.
         let tall = StripLayout.place(panel: 1_000, available: available, beside: 200)
         #expect(tall.height == available && tall.offset == 0 && tall.scrolls)
+    }
+
+    private func item(id: String, priority: Int) -> StripItemModel {
+        StripItemModel(
+            id: id,
+            ring: RingModel(label: "", fraction: 0, isNearlyFull: false, agent: .claudeCode),
+            title: "", project: "", branch: nil, time: "", needsUser: false, pulses: false,
+            highlight: .none, priority: priority, accessibilityLabel: id
+        )
     }
 }

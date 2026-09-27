@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import UsageDomain
@@ -58,6 +59,7 @@ public final class OverlayViewModel {
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var totalsTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverTask: Task<Void, Never>?
+    @ObservationIgnored private var stripHoverOrigin: CGPoint?
     /// How many times the totals were built: the tests count them.
     @ObservationIgnored private(set) var totalsBuilds = 0
     /// When the totals are next rebuilt on their own; the overview counts down to it.
@@ -213,14 +215,17 @@ public final class OverlayViewModel {
     public func pointerOverStrip(_ inside: Bool) {
         stripHoverTask?.cancel()
         stripHoverTask = nil
+        stripHoverOrigin = nil
         isPointerOverStrip = inside
     }
 
     /// Compact content opens only after the pointer has been still over it for one second.
-    /// Every pointer movement restarts the delay; the handle never calls this intent.
-    public func pointerMovedOverCompactStrip() {
+    /// Tiny input jitter leaves the dwell intact; the handle never calls this intent.
+    public func pointerMovedOverCompactStrip(at location: CGPoint = .zero) {
         guard !isDraggingStrip, !isPointerOverStrip else { return }
+        if let origin = stripHoverOrigin, !movedMeaningfully(from: origin, to: location) { return }
         stripHoverTask?.cancel()
+        stripHoverOrigin = location
         let delay = stripHoverDelay
         stripHoverTask = Task { [weak self] in
             do {
@@ -231,6 +236,7 @@ public final class OverlayViewModel {
             guard !Task.isCancelled else { return }
             self?.isPointerOverStrip = true
             self?.stripHoverTask = nil
+            self?.stripHoverOrigin = nil
         }
     }
 
@@ -238,7 +244,15 @@ public final class OverlayViewModel {
     public func pointerLeftStrip() {
         stripHoverTask?.cancel()
         stripHoverTask = nil
+        stripHoverOrigin = nil
         isPointerOverStrip = false
+    }
+
+    private func movedMeaningfully(from origin: CGPoint, to location: CGPoint) -> Bool {
+        let horizontal = location.x - origin.x
+        let vertical = location.y - origin.y
+        let threshold = StripLayout.compactHoverMovementThreshold
+        return horizontal * horizontal + vertical * vertical > threshold * threshold
     }
 
     /// Hovering an item highlights it and stops its "needs you" dot pulsing.

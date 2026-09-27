@@ -51,19 +51,38 @@ struct OverlayViewModelTests {
         )
         await viewModel.load()
 
-        viewModel.pointerMovedOverCompactStrip()
+        viewModel.pointerMovedOverCompactStrip(at: .zero)
         try? await Task.sleep(for: .milliseconds(20))
         #expect(viewModel.strip?.isExpanded == false)
 
-        // Movement restarts the dwell timer instead of expanding while the pointer is in motion.
-        viewModel.pointerMovedOverCompactStrip()
+        // Input jitter is not a real move, so it cannot continually postpone expansion.
+        viewModel.pointerMovedOverCompactStrip(at: CGPoint(x: 2, y: 2))
         try? await Task.sleep(for: .milliseconds(30))
-        #expect(viewModel.strip?.isExpanded == false)
-        try? await Task.sleep(for: .milliseconds(20))
         #expect(viewModel.strip?.isExpanded == true)
 
         viewModel.pointerLeftStrip()
         #expect(viewModel.strip?.isExpanded == false)
+    }
+
+    @Test func meaningfulCompactPointerMovementRestartsTheDwell() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let repository = FakeUsageRepository(calendar: calendar)
+        let viewModel = OverlayViewModel(
+            repository: repository,
+            timeSource: FixedTime(now: repository.anchor),
+            calendar: calendar,
+            stripHoverDelay: .milliseconds(40)
+        )
+        await viewModel.load()
+
+        viewModel.pointerMovedOverCompactStrip(at: .zero)
+        try? await Task.sleep(for: .milliseconds(20))
+        viewModel.pointerMovedOverCompactStrip(at: CGPoint(x: 5, y: 0))
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(viewModel.strip?.isExpanded == false)
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(viewModel.strip?.isExpanded == true)
     }
 
     @Test func theStripStaysFullWhileAPanelIsOpen() async {
@@ -152,7 +171,7 @@ struct OverlayViewModelTests {
         let saved = Saved()
         let viewModel = OverlayViewModel(
             repository: repository, timeSource: FixedTime(now: repository.anchor), calendar: calendar,
-            stripOffset: -40, saveStripOffset: { saved.value = $0 }, stripHoverDelay: .milliseconds(20)
+            stripHoverDelay: .milliseconds(20), stripOffset: -40, saveStripOffset: { saved.value = $0 }
         )
         await viewModel.load()
         // It starts where it was left, and moves only once it has been picked up.
