@@ -74,14 +74,28 @@ struct UsagePanelPresenterTests {
     @Test func pickingAnAgentShowsOnlyThatAgent() async throws {
         let report = try await OverlayPresenterTests.fakeReport()
         let codex = try agent(report, .codex, .today)
-        // Codex's own limit, its own work and model, nothing of Claude's.
-        #expect(codex.limits.map(\.title) == ["Week limit 95%"])
+        // Today has no Codex 5-hour reading, so its weekly limit stays in Week.
+        #expect(codex.limits.isEmpty)
         #expect(codex.whereRows.map(\.label) == ["OpenKitchen · Bug fixes"])
         #expect(codex.models.map(\.name) == ["gpt-5.6"])
         #expect(codex.stats.first { $0.label == "Tokens" }?.value == "410k")
     }
 
-    @Test func twoClaudeAccountsShowSeparatePercentagesWithoutResetTimes() throws {
+    @Test func todayExcludesWeeklyLimitsWhileWeekIncludesThem() async throws {
+        let report = try await OverlayPresenterTests.fakeReport()
+
+        let today = try all(report, .today)
+        #expect(today.limits.map(\.name) == ["Claude 5-hour", "Cursor"])
+        #expect(today.headline == "Claude runs out first: 38% of its 5-hour window is left until 16:40.")
+        #expect(try agent(report, .claudeCode, .today).limits.map(\.title) == ["5-hour limit 62%"])
+        #expect(try agent(report, .codex, .today).limits.isEmpty)
+
+        let week = try all(report, .week)
+        #expect(week.limits.map(\.name) == ["Claude 5-hour", "Claude week", "Codex week", "Cursor"])
+        #expect(try agent(report, .claudeCode, .week).limits.map(\.title) == ["Week limit 48%", "5-hour limit 62%"])
+    }
+
+    @Test func twoClaudeAccountsShowOnlyCurrentPercentagesAndTruthfulResetAvailability() throws {
         let now = Date(timeIntervalSince1970: 1_790_000_000)
         let snapshots = [
             AccountUsageSnapshot(
@@ -101,27 +115,54 @@ struct UsagePanelPresenterTests {
             calendar: calendar
         )(records, now: now)
         let overview = try all(report)
-        #expect(overview.limits.count == 4)
-        #expect(overview.limits.map(\.name).contains("Claude · Personal 5-hour"))
-        #expect(overview.limits.map(\.name).contains("Claude · Work week"))
-        #expect(overview.limits.first { $0.name == "Claude · Personal week" }?.used == "90%")
-        #expect(overview.limits.first { $0.name == "Claude · Personal week" }?.freesUp.contains("Last read") == true)
+        #expect(overview.limits.count == 2)
+        #expect(overview.limits.map(\.name).contains("Claude · Personal"))
+        #expect(overview.limits.first { $0.name == "Claude · Personal" }?.freesUp == "no current data")
+        #expect(overview.limits.first { $0.name == "Claude · Work 5-hour" }?.used == "20%")
+        #expect(overview.limits.first { $0.name == "Claude · Work 5-hour" }?.freesUp == "Reset time unavailable")
         let claude = try agent(report, .claudeCode, .today)
-        #expect(claude.limits.count == 4)
-        #expect(claude.limits.first { $0.title.contains("Personal") }?.detail.contains("may have reset") == true)
+        #expect(claude.limits.map(\.title) == ["Work · 5-hour limit 20%"])
+        #expect(claude.limits.first?.detail == "Reset time unavailable")
+
+        let week = try all(report, .week)
+        #expect(week.limits.first { $0.name == "Claude · Work week" }?.used == "40%")
+        #expect(week.limits.first { $0.name == "Claude · Work week" }?.freesUp == "Reset time unavailable")
+    }
+
+    @Test func staleSnapshotAtAResetDoesNotClaimTheOldPercentage() throws {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let snapshot = AccountUsageSnapshot(
+            id: "/profiles/personal", name: "Personal", agent: .claudeCode,
+            readAt: now - 27 * 60, fiveHourPercent: 100, weeklyPercent: 100
+        )
+        let records = UsageRecords(
+            turns: [], limits: [], sessionEvents: [], capturedAt: now, accountSnapshots: [snapshot]
+        )
+        let report = GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
+            calendar: calendar
+        )(records, now: now)
+
+        let today = try all(report)
+        #expect(today.limits == [
+            LimitListRowModel(
+                id: "claude-code-/profiles/personal-none", agent: .claudeCode, name: "Claude · Personal",
+                fraction: nil, used: "", freesUp: "no current data", isNearlyUsed: false
+            )
+        ])
+        #expect(try agent(report, .claudeCode, .today).limits.isEmpty)
     }
 
     // MARK: - Frame 4: every agent, today
 
     @Test func theAllViewMatchesFrame4() async throws {
         let model = try all(try await OverlayPresenterTests.fakeReport())
-        #expect(model.headline
-            == "Codex runs out first: 5% of its week is left until Thu 06:57. Claude's 5-hour limit frees up at 16:40.")
-        #expect(model.limits.map(\.name) == ["Claude 5-hour", "Claude week", "Codex week", "Cursor"])
-        #expect(model.limits.map(\.used) == ["62%", "48%", "95%", ""])
-        #expect(model.limits.map(\.freesUp) == ["16:40", "Thu", "Thu", "no data"])
+        #expect(model.headline == "Claude runs out first: 38% of its 5-hour window is left until 16:40.")
+        #expect(model.limits.map(\.name) == ["Claude 5-hour", "Cursor"])
+        #expect(model.limits.map(\.used) == ["62%", ""])
+        #expect(model.limits.map(\.freesUp) == ["16:40", "no data"])
         // 85% or more is amber; an agent that shares no limits has no bar.
-        #expect(model.limits.map(\.isNearlyUsed) == [false, false, true, false])
+        #expect(model.limits.map(\.isNearlyUsed) == [false, false])
         #expect(model.limits.last?.fraction == nil)
         #expect(model.tableTitle == "TODAY")
     }
