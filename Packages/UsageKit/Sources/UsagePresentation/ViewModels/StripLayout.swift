@@ -13,6 +13,8 @@ public enum StripLayout {
     /// The transparent window is only as wide as its active glass state.
     public static let restingOverlayWidth = restingWidth + overlayEdgeInset + overlayShadowMargin
     public static let expandedOverlayWidth = expandedWidth + overlayEdgeInset + overlayShadowMargin
+    /// SwiftUI and the hosting panel share one resize timeline, so the rail stays one surface.
+    public static let railTransitionDuration: Double = 0.42
     /// Expanded strip + gap + panel + room for the soft glass shadow.
     public static let overlayWidth: CGFloat = expandedWidth + overlayEdgeInset + panelWidth + overlayShadowMargin
 
@@ -25,24 +27,38 @@ public enum StripLayout {
     public static let handleBand: CGFloat = 16
     public static let handleHitWidth: CGFloat = restingWidth
     public static let handleMarkWidth: CGFloat = 14
+    /// Air between the drag affordance and the first compact session indicator.
+    public static let compactHandleToContentSpacing: CGFloat = 6
     public static let compactSessionLimit = 2
     public static let compactRingBand: CGFloat = 24
     public static let compactRingSpacing: CGFloat = 4
+    /// The compact rail names sessions that do not fit instead of silently hiding them.
+    public static let compactOverflowBand: CGFloat = 16
+    public static let compactOverflowSpacing: CGFloat = 4
     public static let compactVerticalInset: CGFloat = 8
-    /// Maximum height when both compact indicators are present; a single session is shorter.
+    /// Maximum height when both compact indicators and the overflow count are present.
     public static let compactHeight = handleBand
+        + compactHandleToContentSpacing
         + CGFloat(compactSessionLimit) * compactRingBand
         + CGFloat(compactSessionLimit - 1) * compactRingSpacing
+        + compactOverflowSpacing + compactOverflowBand
         + 2 * compactVerticalInset
     /// The compact tab exposes the sessions with the highest presenter priority first.
     static func compactItems(from items: [StripItemModel]) -> [StripItemModel] {
         Array(items.sorted { $0.priority < $1.priority }.prefix(compactSessionLimit))
     }
 
+    static func compactOverflowCount(for items: [StripItemModel]) -> Int {
+        max(items.count - compactSessionLimit, 0)
+    }
+
     /// An empty tab still reserves one band for its usage affordance.
     static func compactContentHeight(for sessionCount: Int) -> CGFloat {
         let indicators = min(max(sessionCount, 1), compactSessionLimit)
-        return CGFloat(indicators) * compactRingBand + CGFloat(indicators - 1) * compactRingSpacing
+        let overflow = sessionCount > compactSessionLimit
+            ? compactOverflowSpacing + compactOverflowBand
+            : 0
+        return CGFloat(indicators) * compactRingBand + CGFloat(indicators - 1) * compactRingSpacing + overflow
     }
     /// The screenshot-only drag state starts before SwiftUI has measured the resting strip.
     /// This keeps a representative 240pt expanded strip visibly above centre even then.

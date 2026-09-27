@@ -9,19 +9,22 @@ struct StripLayoutTests {
         #expect(StripLayout.expandedWidth == 236)
         #expect(StripLayout.restingWidth == 36)
         #expect(StripLayout.compactSessionLimit == 2)
-        #expect(StripLayout.compactHeight == 84)
+        #expect(StripLayout.compactHeight == 110)
         #expect(StripLayout.compactHeight < 120)
         #expect(StripLayout.restingOverlayWidth == 76)
         #expect(StripLayout.expandedOverlayWidth == 276)
+        #expect(StripLayout.railTransitionDuration == 0.42)
         #expect(StripLayout.compactContentHeight(for: 0) == 24)
         #expect(StripLayout.compactContentHeight(for: 1) == 24)
         #expect(StripLayout.compactContentHeight(for: 2) == 52)
+        #expect(StripLayout.compactContentHeight(for: 3) == 72)
     }
 
     @Test func compactTabUsesTheTwoHighestPrioritySessions() {
         let items = [item(id: "third", priority: 2), item(id: "first", priority: 0), item(id: "second", priority: 1)]
 
         #expect(StripLayout.compactItems(from: items).map(\.id) == ["first", "second"])
+        #expect(StripLayout.compactOverflowCount(for: items) == 1)
     }
 
     // MARK: - Dragging

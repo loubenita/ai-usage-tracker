@@ -75,7 +75,7 @@ public struct OverlayView: View {
                         isDragging: viewModel.isDraggingStrip,
                         restHeight: restStripHeight,
                         onPointerMoved: { location in
-                            if !locksExpandedStrip { viewModel.pointerMovedOverCompactStrip(at: location) }
+                            if !locksExpandedStrip { viewModel.pointerMovedOverStrip(at: location) }
                         },
                         onPointerLeft: {
                             if !locksExpandedStrip { viewModel.pointerLeftStrip() }
