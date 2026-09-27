@@ -80,5 +80,6 @@ Antigravity runs as a desktop app rather than in a terminal and encrypts what it
 
 ## More
 
+- [Provider data inventory](docs/provider-data-inventory.md) — fields the app can read or calculate, what is unavailable, how Claude accounts work, and which facts belong in each view.
 - [How it works](docs/how-it-works.md) — how sessions are found, what each agent's files give, how a month of history is read and kept, and the architecture.
 - [Building and running it](docs/development.md) — build, test, the launch options, the scripts, and how a release is made.
