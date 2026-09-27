@@ -189,23 +189,29 @@ private struct ExpandedContents: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 8)
+            .padding(.bottom, 6)
             ViewThatFits(in: .vertical) {
-                VStack(spacing: 0) { items; UsageButton(action: onUsage).padding(.top, 8) }
+                VStack(spacing: 0) { items; UsageButton(action: onUsage).padding(.top, 6) }
                 VStack(spacing: 0) {
                     ScrollView(.vertical) { items }.scrollIndicators(.automatic)
-                    UsageButton(action: onUsage).padding(.top, 8)
+                    UsageButton(action: onUsage).padding(.top, 6)
                 }
             }
         }
     }
 
     private var items: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 0) {
             ForEach(model.items) { item in
                 StripItemView(item: item)
                     .onHover { inside in onHover(item.id, inside) }
                     .onTapGesture { onClick(item.id) }
+                if item.id != model.items.last?.id {
+                    Rectangle()
+                        .fill(Theme.divider)
+                        .frame(height: 0.5)
+                        .padding(.leading, 10)
+                }
             }
             if model.items.isEmpty {
                 Text("No active sessions")
@@ -224,7 +230,7 @@ private struct StripItemView: View {
     let item: StripItemModel
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             AgentMark(agent: item.ring.agent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
@@ -238,6 +244,7 @@ private struct StripItemView: View {
                     // The project and branch share this two-line budget. A long branch cannot
                     // grow a row by taking a third line below its project.
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(spacing: 3) {
@@ -255,21 +262,20 @@ private struct StripItemView: View {
             .frame(width: 40)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 10).fill(highlightFill))
+        .padding(.vertical, 3)
+        .background(item.highlight == .hovered ? Theme.lift(0.07) : .clear)
+        .overlay(alignment: .leading) {
+            if item.highlight == .selected {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Theme.agent(item.ring.agent))
+                    .frame(width: 3, height: 36)
+            }
+        }
         .contentShape(.rect)
         .help(item.title)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.accessibilityLabel)
         .accessibilityAddTraits(.isButton)
-    }
-
-    private var highlightFill: Color {
-        switch item.highlight {
-        case .none: .clear
-        case .hovered: Theme.lift(0.16)
-        case .selected: Theme.lift(0.28)
-        }
     }
 
     private var context: String {
