@@ -1,11 +1,11 @@
 import CoreGraphics
 
-/// At rest, show up to three sessions ranked by spend and context use, within screen height.
+/// A compact edge tab grows into the session list while keeping its placement on screen.
 public enum StripLayout {
     /// The expanded strip is a compact provider mark, task and context ring. Session and usage
     /// panels keep the wider reading column beside it.
     public static let expandedWidth: CGFloat = 236
-    public static let restingWidth: CGFloat = 36
+    public static let restingWidth: CGFloat = 32
     public static let panelWidth: CGFloat = 430
     /// The inset at the screen edge and room for the soft glass shadow.
     public static let overlayEdgeInset: CGFloat = 8
@@ -16,42 +16,18 @@ public enum StripLayout {
     /// Expanded strip + gap + panel + room for the soft glass shadow.
     public static let overlayWidth: CGFloat = expandedWidth + overlayEdgeInset + panelWidth + overlayShadowMargin
 
-    /// The resting strip shows up to this many sessions and counts the rest in "+N".
-    public static let restLimit = 3
-
-    /// Slim edge rail: a drag handle, then context rings without labels or timers.
-    static let restPadding: CGFloat = 8 * 2 + handleBand + 4
-    static let restItemPitch: CGFloat = 28 + 8
-    static let restItemHeight: CGFloat = 28
-    /// The "+N" band across the foot of the strip, and the gap above it.
-    static let restChipHeight: CGFloat = 26
-    static let restChipGap: CGFloat = 10
-    static let restChip: CGFloat = restChipHeight + restChipGap
-
-    /// Sessions that fit on the resting rail in `height`, and never more than `restLimit`. The
-    /// "+N" chip is a small chip rather than an item, so it takes no session's place; it does
-    /// take its own room, so `showingChip` leaves it.
-    public static func restCapacity(height: CGFloat, showingChip: Bool = false) -> Int {
-        let forItems = height - restPadding - (showingChip ? restChip : 0)
-        guard forItems >= restItemHeight else { return 1 }
-        return min(Int((forItems - restItemHeight) / restItemPitch) + 1, restLimit)
-    }
-
-    /// Which sessions to draw: as many as there is room for, and a "+N" chip counting the rest.
-    public static func visible(count: Int, capacity: Int) -> (shown: Int, hidden: Int) {
-        let shown = min(count, capacity)
-        return (shown, count - shown)
-    }
-
     // MARK: - Dragging the strip
 
     /// The pointer moves this far with the button down before the strip is picked up. Until
     /// then nothing changes, so a click on the handle leaves the strip as it was.
     public static let dragThreshold: CGFloat = 4
-    /// The slim handle remains visible at rest, so moving the rail does not require hover.
+    /// The compact rail is a 52pt edge tab: handle, then one count band.
     public static let handleBand: CGFloat = 16
-    public static let handleHitWidth: CGFloat = 36
-    public static let handleMarkWidth: CGFloat = 18
+    public static let handleHitWidth: CGFloat = restingWidth
+    public static let handleMarkWidth: CGFloat = 14
+    public static let compactCountBand: CGFloat = 20
+    public static let compactVerticalInset: CGFloat = 8
+    public static let compactHeight = handleBand + compactCountBand + 2 * compactVerticalInset
     /// The screenshot-only drag state starts before SwiftUI has measured the resting strip.
     /// This keeps a representative 240pt expanded strip visibly above centre even then.
     public static let forcedDragOffset: CGFloat = -240

@@ -2,41 +2,14 @@ import CoreGraphics
 import Testing
 @testable import UsagePresentation
 
-@Suite("How many sessions fit on the strip")
+@Suite("Strip layout")
 struct StripLayoutTests {
-    @Test func theExpandedListStaysCompact() {
+    @Test func theExpandedListAndCompactTabStaySmall() {
         #expect(StripLayout.expandedWidth == 236)
-        #expect(StripLayout.restingWidth == 36)
-        #expect(StripLayout.restingOverlayWidth == 76)
+        #expect(StripLayout.restingWidth == 32)
+        #expect(StripLayout.compactHeight == 52)
+        #expect(StripLayout.restingOverlayWidth == 72)
         #expect(StripLayout.expandedOverlayWidth == 276)
-    }
-
-    @Test func countsWholeItemsAfterThePaddingAndStopsAtThree() {
-        // The visible handle, 8pt insets, one full-ring item and one more every 58pt, capped at three.
-        let firstItem = StripLayout.restPadding + StripLayout.restItemHeight
-        #expect(StripLayout.restCapacity(height: 907) == 3)
-        #expect(StripLayout.restCapacity(height: firstItem) == 1)
-        #expect(StripLayout.restCapacity(height: firstItem + StripLayout.restItemPitch) == 2)
-        #expect(StripLayout.restCapacity(height: firstItem + StripLayout.restItemPitch - 1) == 1)
-    }
-
-    @Test func aTinyScreenStillShowsOne() {
-        #expect(StripLayout.restCapacity(height: 10) == 1)
-    }
-
-    @Test func showsThreeSessionsWhenTheyFit() {
-        #expect(StripLayout.visible(count: 3, capacity: 3) == (3, 0))
-        #expect(StripLayout.visible(count: 5, capacity: 3) == (3, 2))
-    }
-
-    @Test func theChipCountsTheRestWithoutTakingASessionsPlace() {
-        // Nine sessions, room for three: three rings and "+6".
-        #expect(StripLayout.visible(count: 9, capacity: 3) == (3, 6))
-        let threeRings = StripLayout.restPadding + StripLayout.restItemHeight
-            + 2 * StripLayout.restItemPitch
-        #expect(StripLayout.restCapacity(height: threeRings) == 3)
-        #expect(StripLayout.restCapacity(height: threeRings, showingChip: true) == 2)
-        #expect(StripLayout.restCapacity(height: threeRings + StripLayout.restChip, showingChip: true) == 3)
     }
 
     // MARK: - Dragging
@@ -87,9 +60,9 @@ struct StripLayoutTests {
     }
 
     @Test func theDragHandleStaysFullyVisibleAtTheScreenEdge() {
-        #expect(StripLayout.handleHitWidth == 36)
-        #expect(StripLayout.handleMarkWidth == 18)
-        #expect(StripLayout.handleHitWidth / 2 == 18)
+        #expect(StripLayout.handleHitWidth == 32)
+        #expect(StripLayout.handleMarkWidth == 14)
+        #expect(StripLayout.handleHitWidth / 2 == 16)
     }
 
     // MARK: - Staying on the screen
@@ -173,9 +146,5 @@ struct StripLayoutTests {
         // Taller than the screen: it fills the height and scrolls.
         let tall = StripLayout.place(panel: 1_000, available: available, beside: 200)
         #expect(tall.height == available && tall.offset == 0 && tall.scrolls)
-    }
-
-    @Test func aTinyScreenShowsOneSessionAndCountsTheRest() {
-        #expect(StripLayout.visible(count: 5, capacity: 1) == (1, 4))
     }
 }

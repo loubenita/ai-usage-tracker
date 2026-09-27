@@ -23,18 +23,16 @@ struct StripView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            handle
+            if !model.isExpanded {
+                handle
+            }
             VStack(spacing: 0) {
                 if model.isExpanded {
                     ExpandedContents(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage)
+                        .transition(.opacity)
                 } else {
-                    RestingContents(
-                        model: model,
-                        capacity: StripLayout.restCapacity(
-                            height: availableHeight,
-                            showingChip: model.items.count > StripLayout.restLimit
-                        )
-                    )
+                    RestingContents(sessionCount: model.items.count)
+                        .transition(.opacity)
                 }
             }
             // The handle is deliberately outside this dwell target, so placing the pointer over
@@ -48,7 +46,7 @@ struct StripView: View {
             }
         }
         .frame(width: model.isExpanded ? StripLayout.expandedWidth : StripLayout.restingWidth)
-        .padding(.vertical, 8)
+        .padding(.vertical, StripLayout.compactVerticalInset)
         .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.stripRadius))
         .offset(y: offset)
         .animation(transitionAnimation, value: model.isExpanded)
@@ -98,25 +96,23 @@ struct StripView: View {
 }
 
 private struct RestingContents: View {
-    let model: StripModel
-    let capacity: Int
+    let sessionCount: Int
 
     var body: some View {
-        let ranked = model.items.sorted { $0.priority < $1.priority }
-        let visible = StripLayout.visible(count: ranked.count, capacity: capacity)
-        VStack(spacing: 8) {
-            ForEach(ranked.prefix(visible.shown)) { item in
-                VStack(spacing: 2) {
-                    SessionRing(model: item.ring)
-                        .overlay(alignment: .topTrailing) {
-                            if item.needsUser { NeedsYouDot(pulses: item.pulses, diameter: 8).offset(x: 1, y: -1) }
-                        }
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(item.accessibilityLabel)
-            }
-        }
-        .padding(.bottom, 4)
+        Text(sessionCount, format: .number)
+            .font(TypeScale.font(TypeScale.caption, .semibold))
+            .foregroundStyle(Theme.primary)
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(maxWidth: .infinity)
+            .frame(height: StripLayout.compactCountBand)
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        let noun = sessionCount == 1 ? "session" : "sessions"
+        return "\(sessionCount) active \(noun)"
     }
 }
 
