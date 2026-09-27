@@ -34,9 +34,6 @@ public enum StripLayout {
         + CGFloat(compactSessionLimit) * compactRingBand
         + CGFloat(compactSessionLimit - 1) * compactRingSpacing
         + 2 * compactVerticalInset
-    /// Small pointer jitter inside this radius does not restart the dwell timer.
-    public static let compactHoverMovementThreshold: CGFloat = 4
-
     /// The compact tab exposes the sessions with the highest presenter priority first.
     static func compactItems(from items: [StripItemModel]) -> [StripItemModel] {
         Array(items.sorted { $0.priority < $1.priority }.prefix(compactSessionLimit))

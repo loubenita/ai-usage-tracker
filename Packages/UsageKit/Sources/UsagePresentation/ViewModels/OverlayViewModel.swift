@@ -220,10 +220,10 @@ public final class OverlayViewModel {
     }
 
     /// Compact content opens only after the pointer has been still over it for one second.
-    /// Tiny input jitter leaves the dwell intact; the handle never calls this intent.
+    /// Only an identical repeated hover event leaves the dwell intact; the handle never calls this intent.
     public func pointerMovedOverCompactStrip(at location: CGPoint = .zero) {
         guard !isDraggingStrip, !isPointerOverStrip else { return }
-        if let origin = stripHoverOrigin, !movedMeaningfully(from: origin, to: location) { return }
+        if stripHoverOrigin == location { return }
         stripHoverTask?.cancel()
         stripHoverOrigin = location
         let delay = stripHoverDelay
@@ -246,13 +246,6 @@ public final class OverlayViewModel {
         stripHoverTask = nil
         stripHoverOrigin = nil
         isPointerOverStrip = false
-    }
-
-    private func movedMeaningfully(from origin: CGPoint, to location: CGPoint) -> Bool {
-        let horizontal = location.x - origin.x
-        let vertical = location.y - origin.y
-        let threshold = StripLayout.compactHoverMovementThreshold
-        return horizontal * horizontal + vertical * vertical > threshold * threshold
     }
 
     /// Hovering an item highlights it and stops its "needs you" dot pulsing.

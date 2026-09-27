@@ -55,8 +55,8 @@ struct OverlayViewModelTests {
         try? await Task.sleep(for: .milliseconds(20))
         #expect(viewModel.strip?.isExpanded == false)
 
-        // Input jitter is not a real move, so it cannot continually postpone expansion.
-        viewModel.pointerMovedOverCompactStrip(at: CGPoint(x: 2, y: 2))
+        // Duplicate delivery for an unchanged cursor position leaves the dwell intact.
+        viewModel.pointerMovedOverCompactStrip(at: .zero)
         try? await Task.sleep(for: .milliseconds(30))
         #expect(viewModel.strip?.isExpanded == true)
 
@@ -64,7 +64,7 @@ struct OverlayViewModelTests {
         #expect(viewModel.strip?.isExpanded == false)
     }
 
-    @Test func meaningfulCompactPointerMovementRestartsTheDwell() async {
+    @Test func anyCompactPointerMovementRestartsTheDwell() async {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
         let repository = FakeUsageRepository(calendar: calendar)
@@ -78,7 +78,8 @@ struct OverlayViewModelTests {
 
         viewModel.pointerMovedOverCompactStrip(at: .zero)
         try? await Task.sleep(for: .milliseconds(20))
-        viewModel.pointerMovedOverCompactStrip(at: CGPoint(x: 5, y: 0))
+        // Even a subpoint change means the cursor moved and starts a new full dwell.
+        viewModel.pointerMovedOverCompactStrip(at: CGPoint(x: 0.5, y: 0))
         try? await Task.sleep(for: .milliseconds(30))
         #expect(viewModel.strip?.isExpanded == false)
         try? await Task.sleep(for: .milliseconds(20))
