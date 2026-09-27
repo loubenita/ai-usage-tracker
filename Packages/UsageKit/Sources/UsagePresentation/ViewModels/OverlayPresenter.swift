@@ -49,9 +49,9 @@ public struct OverlayPresenter: Sendable {
                 id: summary.id,
                 ring: ring(session),
                 title: session.title,
-                // Short, so it fits the 30pt strip; the panel says it in full.
+                project: summary.work.tag.project,
+                branch: summary.work.branch,
                 time: format.compactDuration(summary.activeDuration),
-                account: summary.origin?.accountName,
                 needsUser: summary.needsUser,
                 pulses: summary.needsUser && !acknowledged.contains(summary.id),
                 highlight: highlight,
@@ -60,7 +60,8 @@ public struct OverlayPresenter: Sendable {
                     session.title,
                     summary.agent.displayName,
                     summary.work.tag.project,
-                    summary.origin?.accountName.map { "account \($0)" },
+                    summary.work.branch,
+                    Self.meaningfulAccount(summary.origin?.accountName).map { "account \($0)" },
                     summary.activity?.firstAsk,
                     format.duration(summary.activeDuration),
                     summary.context.map {
@@ -81,7 +82,7 @@ public struct OverlayPresenter: Sendable {
         return SessionPanelModel(
             sessionID: sessionID,
             agent: summary.agent,
-            subtitle: [summary.work.tag.project, summary.origin?.accountName]
+            subtitle: [summary.work.tag.project, summary.work.branch, Self.meaningfulAccount(summary.origin?.accountName)]
                 .compactMap { $0 }.joined(separator: " · "),
             title: session.title,
             openAction: summary.origin.flatMap(openAction),
@@ -209,9 +210,19 @@ public struct OverlayPresenter: Sendable {
             ),
             work.isEmpty ? nil : DetailRowModel(label: "Work", value: work.joined(separator: " · ")),
             summary.work.branch.map { DetailRowModel(label: "Branch", value: $0) },
-            summary.origin?.accountName.map { DetailRowModel(label: "Account", value: $0) },
+            Self.meaningfulAccount(summary.origin?.accountName).map { DetailRowModel(label: "Account", value: $0) },
             activity?.firstAsk.map { DetailRowModel(label: "First ask", value: quoted($0)) },
         ].compactMap { $0 }
+    }
+
+    /// A default profile does not distinguish one session from another, so do not spend row
+    /// space on it. Named profiles remain visible in the selected-session panel and details.
+    static func meaningfulAccount(_ name: String?) -> String? {
+        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty,
+              name.localizedCaseInsensitiveCompare("default") != .orderedSame
+        else { return nil }
+        return name
     }
 
     /// "64 tool calls", "1 tool call".
@@ -250,7 +261,7 @@ public struct OverlayPresenter: Sendable {
         switch summary.state {
         case .waiting:
             return StatusModel(
-                kind: .waiting, text: ["Waiting for your reply", waited].compactMap { $0 }.joined(separator: " · "),
+                kind: .waiting, text: ["Ready for input", waited].compactMap { $0 }.joined(separator: " · "),
                 place: place
             )
         case .working where session.isContextNearlyFull:

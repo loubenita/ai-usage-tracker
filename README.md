@@ -2,8 +2,6 @@
 
 A small macOS overlay on the right edge of your screen that shows the AI coding agents running in your terminals: what each session is costing, how full its context is, and which plan limit runs out first. It reads the files Claude Code, Codex, Cursor Agent and Kiro already keep on your Mac. It has no Dock icon and no menu bar item.
 
-<img src="docs/images/strip.png" alt="The strip at rest and under the pointer: context rings with session times and the usage button" width="260">
-
 ## Install
 
 Needs macOS 26 or later.
@@ -31,30 +29,24 @@ To quit the app, right-click the strip or a panel and choose **Quit**.
 
 ### The strip
 
-At rest it is a half strip on the screen's edge, listing up to three sessions ranked by spend and context use with a "+N" band for the rest. Move the pointer over it and it grows into a compact list. Each row has a distinct provider mark, a short task name, active time and the context ring. Full facts stay in the selected session's panel.
+At rest a rounded glass rail sits just inside the screen's right edge. It shows up to three sessions ranked by spend and context use, with a "+N" count for the rest. Move the pointer over it and the same rail widens into a list. Each row shows the agent, task, project and branch when known, active time, and context ring. Full facts stay in the selected session's panel.
 
 - Each ring fills as that session's context fills, turns red when it is nearly full, and carries its agent's colour.
 - Inside the ring is the current context in use: the number and the fill describe the same reading. Cumulative session tokens stay in the session panel.
-- An amber dot means the session is waiting for your reply.
-- Expand the strip to reveal its drag bar, then drag it up or down the edge. It becomes compact while moving. It stays where you drop it; dragging or scrolling the session rows does not move the overlay.
+- An amber dot means the last agent turn finished and the session is ready for input. The app cannot tell who should respond next.
+- Drag the visible handle at the top of the rail to move it up or down. It becomes compact while moving and stays where you drop it. Scrolling the session rows does not move the overlay.
 
 ### A session
 
 Click a ring.
 
-<img src="docs/images/session.png" alt="A selected session panel with status, total spend and tokens, context, and a Show details control" width="330">
+It shows only the selected session, including its account when the agent exposes one: what it is doing and where it runs, total spend and tokens, active time and turns, and context with when it will be full at this pace. **Show details** reveals readable token categories, pace, model, branch and first ask. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. Sessions that started sub-agents show their run count, combined tokens, cost, working time and share of session spend in one summary. These runs are already included in the session totals.
 
-It shows only the selected session, including its account when the agent exposes one: what it is doing and where it runs, total spend and tokens, active time and turns, and context with when it will be full at this pace. **Show details** reveals readable token categories, pace, model, branch and first ask. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. The panel also lists every sub-agent run separately with its tokens, cost and time, plus a combined total and an explicit reminder that those runs are already included in the session totals.
-
-[See the expanded details with all six sub-agent runs and the session facts.](docs/images/session-details.png)
-
-**Open** is shown where the session can be selected: inside tmux it moves tmux to the session's pane, and in Terminal it selects the tab with the session's TTY. Direct Warp, iTerm and Ghostty sessions instead say **Bring forward**, because those apps do not expose a supported way to select an exact tab. It never types into your terminal, and what it did is written to `~/Library/Application Support/AIUsageTracker/open.log`.
+**Open** selects the existing tab and session in Terminal or iTerm by its TTY. For tmux, it selects the session's pane in an attached tmux client and brings the host terminal forward. Warp and Ghostty sessions say **Bring forward**: the app can raise those terminals, but cannot select an exact tab there. This also limits which Warp tab becomes visible for a tmux session. The app never types into a terminal. Its action and observed result are written to `~/Library/Application Support/AIUsageTracker/open.log`.
 
 ### Usage
 
 The button under the strip opens the usage panel: every agent, or one, across Today, Week and Month.
-
-<img src="docs/images/usage-today.png" alt="The usage panel on All and Today: Codex runs out first with 5% of its week left until Thursday 06:57; a limits list; a table of time, tokens and spend per agent; where the time went" width="300"> <img src="docs/images/usage-week-claude.png" alt="The usage panel on Claude and Week: week limit 48% freeing up Thursday, spend $31.40, 12.2M tokens, 22h 04m, 14 sessions, tokens per day with Thursday busiest" width="300">
 
 It opens by naming what runs out first — "Codex runs out first: 5% of its week is left until Thu 06:57" — then lists every limit each agent shares, with how much is used and when it frees up, amber at 85%. Under that: time, tokens and spend for each agent, and where the time went. Picking one agent shows its limits and pace, its numbers, a chart of the period, its models and its work.
 

@@ -11,18 +11,17 @@ struct TerminalFocusTests {
         SessionOrigin(pid: 1, tty: tty, terminal: terminal, folder: "/", tmux: tmux, hostTerminal: host)
     }
 
-    @Test func tmuxBringsItsTerminalForwardThenMovesToThePane() {
+    @Test func tmuxUsesTheClientAlreadyShowingTheTargetSession() {
         let lead = origin(.tmux, tmux: TmuxLocation(session: "lead", window: "@24", pane: "%24"), host: .warp)
-        // Two terminal tabs, each with a tmux client; the second was used more recently.
+        // The other tab was used more recently, but the target is already visible in the first
+        // tab. Selecting that client keeps Open from silently moving a different terminal tab.
         let clients = [
             TmuxClient(tty: "/dev/ttys001", session: "lead", activity: 100),
             TmuxClient(tty: "/dev/ttys009", session: "other", activity: 200),
         ]
         #expect(TerminalFocus.plan(for: lead, clients: clients) == [
             .activate(bundleID: "dev.warp.Warp-Stable"),
-            // The tab the person is looking at is where the session is brought, since no
-            // terminal lets a tab be chosen from outside.
-            .run(program: "tmux", arguments: ["switch-client", "-c", "/dev/ttys009", "-t", "=lead"]),
+            .run(program: "tmux", arguments: ["switch-client", "-c", "/dev/ttys001", "-t", "=lead"]),
             .run(program: "tmux", arguments: ["select-window", "-t", "@24"]),
             .run(program: "tmux", arguments: ["select-pane", "-t", "%24"]),
         ])
@@ -30,17 +29,28 @@ struct TerminalFocusTests {
         #expect(TerminalFocus.action(for: lead) == .session)
     }
 
-    @Test func theTabToMoveIsTheOneUsedLastAndTiesGoToTheOneAlreadyThere() {
+    @Test func tmuxFallsBackToTheMostRecentClientOnlyWhenNoClientShowsTheSession() {
         let clients = [
             TmuxClient(tty: "/dev/ttys001", session: "lead", activity: 100),
             TmuxClient(tty: "/dev/ttys009", session: "other", activity: 100),
             TmuxClient(tty: "/dev/ttys012", session: "third", activity: 90),
         ]
-        // Used at the same moment: the tab already showing the session, so nothing moves needlessly.
+        // A matching client always wins, even if another client was used more recently.
         #expect(TerminalFocus.mostRecent(clients, showing: "lead")?.tty == "/dev/ttys001")
-        // A tab used more recently wins.
+        // With no matching client, the most recently used one is the deterministic fallback.
         let newer = clients + [TmuxClient(tty: "/dev/ttys020", session: "fourth", activity: 300)]
-        #expect(TerminalFocus.mostRecent(newer, showing: "lead")?.tty == "/dev/ttys020")
+        #expect(TerminalFocus.mostRecent(newer, showing: "missing")?.tty == "/dev/ttys020")
+        // Session names must match exactly: "lead-west" is not the "lead" session.
+        let similarlyNamed = [
+            TmuxClient(tty: "/dev/ttys003", session: "lead-west", activity: 400),
+            TmuxClient(tty: "/dev/ttys002", session: "lead", activity: 1),
+        ]
+        #expect(TerminalFocus.mostRecent(similarlyNamed, showing: "lead")?.tty == "/dev/ttys002")
+        let tiedFallback = [
+            TmuxClient(tty: "/dev/ttys009", session: "other", activity: 10),
+            TmuxClient(tty: "/dev/ttys001", session: "third", activity: 10),
+        ]
+        #expect(TerminalFocus.mostRecent(tiedFallback, showing: "missing")?.tty == "/dev/ttys001")
         #expect(TerminalFocus.mostRecent([], showing: "lead") == nil)
     }
 
@@ -50,14 +60,17 @@ struct TerminalFocusTests {
         /dev/ttys003\tlead\t@1\t%1
         /dev/ttys012\twork\t@7\t%9
         """)
-        #expect(TerminalFocus.plan(for: codex, panes: panes) == [
+        let clients = [TmuxClient(tty: "/dev/ttys001", session: "lead", activity: 100)]
+        #expect(TerminalFocus.plan(for: codex, panes: panes, clients: clients) == [
             .activate(bundleID: "com.apple.Terminal"),
-            .run(program: "tmux", arguments: ["switch-client", "-t", "=work"]),
+            .run(program: "tmux", arguments: ["switch-client", "-c", "/dev/ttys001", "-t", "=work"]),
             .run(program: "tmux", arguments: ["select-window", "-t", "@7"]),
             .run(program: "tmux", arguments: ["select-pane", "-t", "%9"]),
         ])
         // No pane with that TTY: the terminal comes forward and tmux is left as it is.
         #expect(TerminalFocus.plan(for: codex, panes: []) == [.activate(bundleID: "com.apple.Terminal")])
+        // With no attached tmux client, tmux has nowhere to show the session.
+        #expect(TerminalFocus.plan(for: codex, panes: panes) == [.activate(bundleID: "com.apple.Terminal")])
     }
 
     @Test func aRecordedPaneThatIsStillThereIsUsed() {
@@ -69,7 +82,8 @@ struct TerminalFocusTests {
         let found = TerminalFocus.location(for: lead, panes: panes)
         #expect(found.route == .recorded)
         #expect(found.location?.pane == "%24")
-        #expect(TerminalFocus.plan(for: lead, panes: panes).contains(.run(program: "tmux", arguments: ["select-pane", "-t", "%24"])))
+        let clients = [TmuxClient(tty: "/dev/ttys004", session: "lead", activity: 1)]
+        #expect(TerminalFocus.plan(for: lead, panes: panes, clients: clients).contains(.run(program: "tmux", arguments: ["select-pane", "-t", "%24"])))
     }
 
     @Test func aRecordedPaneThatHasGoneIsFoundByTheSessionsTTY() {
@@ -79,7 +93,8 @@ struct TerminalFocusTests {
         let found = TerminalFocus.location(for: lead, panes: panes)
         #expect(found.route == .byTTY)
         #expect(found.location == TmuxLocation(session: "lead", window: "@30", pane: "%31"))
-        let steps = TerminalFocus.plan(for: lead, panes: panes)
+        let clients = [TmuxClient(tty: "/dev/ttys004", session: "lead", activity: 1)]
+        let steps = TerminalFocus.plan(for: lead, panes: panes, clients: clients)
         #expect(steps.contains(.run(program: "tmux", arguments: ["select-window", "-t", "@30"])))
         #expect(steps.contains(.run(program: "tmux", arguments: ["select-pane", "-t", "%31"])))
         #expect(!steps.contains(.run(program: "tmux", arguments: ["select-pane", "-t", "%24"])))
@@ -116,21 +131,40 @@ struct TerminalFocusTests {
         #expect(plan.last == .activate(bundleID: "com.apple.Terminal"))
     }
 
+    @Test func iTermSelectsTheSessionTabAndWindowByTTY() {
+        let plan = TerminalFocus.plan(for: origin(.iterm))
+        #expect(plan.count == 2)
+        guard case .run(let program, let arguments) = plan.first else { Issue.record("no script"); return }
+        #expect(program == "osascript")
+        #expect(arguments.first == "-e")
+        let script = arguments.last ?? ""
+        #expect(script.contains("tell application \"iTerm2\""))
+        #expect(script.contains("if tty of s is \"/dev/ttys004\" then"))
+        #expect(script.contains("select w"))
+        #expect(script.contains("select t"))
+        #expect(script.contains("select s"))
+        // It selects existing iTerm objects. It never sends text, keys, or mouse events.
+        #expect(!script.contains("write text") && !script.contains("keystroke") && !script.contains("System Events"))
+        #expect(plan.last == .activate(bundleID: "com.googlecode.iterm2"))
+        #expect(TerminalFocus.action(for: origin(.iterm)) == .session)
+    }
+
     @Test func aTTYThatIsNotOneNeverReachesTheScript() {
         let odd = origin(.terminal, tty: "ttys004\" & do shell script \"x")
         #expect(TerminalFocus.plan(for: odd) == [.activate(bundleID: "com.apple.Terminal")])
         #expect(TerminalFocus.action(for: odd) == .application(.terminal))
+        let iTermOdd = origin(.iterm, tty: odd.tty)
+        #expect(TerminalFocus.plan(for: iTermOdd) == [.activate(bundleID: "com.googlecode.iterm2")])
+        #expect(TerminalFocus.action(for: iTermOdd) == .application(.iterm))
         #expect(TerminalFocus.safeTTY("/dev/ttys004") == "/dev/ttys004")
         #expect(TerminalFocus.safeTTY("ttys004") == "/dev/ttys004")
         #expect(TerminalFocus.safeTTY("console") == nil)
     }
 
-    @Test func warpITermAndGhosttyAreOnlyBroughtForward() {
+    @Test func warpAndGhosttyAreOnlyBroughtForward() {
         #expect(TerminalFocus.plan(for: origin(.warp)) == [.activate(bundleID: "dev.warp.Warp-Stable")])
-        #expect(TerminalFocus.plan(for: origin(.iterm)) == [.activate(bundleID: "com.googlecode.iterm2")])
         #expect(TerminalFocus.plan(for: origin(.ghostty)) == [.activate(bundleID: "com.mitchellh.ghostty")])
         #expect(TerminalFocus.action(for: origin(.warp)) == .application(.warp))
-        #expect(TerminalFocus.action(for: origin(.iterm)) == .application(.iterm))
         #expect(TerminalFocus.action(for: origin(.ghostty)) == .application(.ghostty))
     }
 

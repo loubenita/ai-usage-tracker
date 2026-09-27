@@ -80,6 +80,9 @@ public struct OverlayView: View {
                         onDrag: { offset, limit in viewModel.dragStrip(to: offset, limit: limit) },
                         onDragEnd: { viewModel.endStripDrag() }
                     )
+                    // The resting rail is a macOS surface with air around it, not a clipped
+                    // extension of the screen edge. The expanded list keeps that same inset.
+                    .padding(.trailing, Self.screenMargin)
                     .measureHeight { height in
                         stripHeight = height
                         if !model.isExpanded { restStripHeight = height }

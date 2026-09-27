@@ -24,8 +24,12 @@ public struct StripItemModel: Sendable, Equatable, Identifiable {
     /// The expanded strip's short task identity. Provider identity is carried by the icon and
     /// colour beside it, with the provider name in the accessibility label.
     public let title: String
+    /// Project or folder context for the session.
+    public let project: String
+    /// The worktree branch, when the source knows it.
+    public let branch: String?
+    /// Compact active time, kept separate so it never disappears behind a long branch name.
     public let time: String
-    public let account: String?
     public let needsUser: Bool
     /// The amber dot pulses until the item has been hovered once.
     public let pulses: Bool
@@ -37,8 +41,7 @@ public struct StripItemModel: Sendable, Equatable, Identifiable {
 
 public struct StripModel: Sendable, Equatable {
     public let items: [StripItemModel]
-    /// The full strip shows while the pointer is over it or a panel is open;
-    /// otherwise only the half strip on the screen edge shows.
+    /// The rail widens while the pointer is over it or a panel is open.
     public let isExpanded: Bool
 }
 
@@ -48,7 +51,7 @@ public enum StatusKind: Sendable, Equatable {
 
 public struct StatusModel: Sendable, Equatable {
     public let kind: StatusKind
-    /// "Waiting for your reply · 4m".
+    /// "Ready for input · 4m".
     public let text: String
     /// Where the session runs, "Warp · tmux lead"; nil when it is not known.
     public let place: String?

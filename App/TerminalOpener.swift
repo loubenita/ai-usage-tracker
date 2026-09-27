@@ -56,24 +56,56 @@ struct TerminalOpener: SessionOpening {
             }
             // What that client is looking at afterwards, so the log shows whether the switch
             // really happened. Without naming the client, tmux answers for another one.
-            if origin.terminal == .tmux, let session = origin.tmux?.session ?? panes.first?.location.session {
-                let client = TerminalFocus.mostRecent(clients, showing: session)
-                let arguments = ["display-message", "-p"] + (client.map { ["-c", $0.tty] } ?? []) + ["#S:#I.#P"]
+            if origin.terminal == .tmux {
+                let location = TerminalFocus.location(for: origin, panes: panes).location
+                guard let session = location?.session else { return }
+                guard let client = TerminalFocus.mostRecent(clients, showing: session) else {
+                    log.write("tmux: no attached client can show \(session)")
+                    return
+                }
+                let arguments = ["display-message", "-p", "-c", client.tty, "#S:#I.#P"]
                 let now = Self.run("tmux", arguments, log: log).output.trimmingCharacters(in: .whitespacesAndNewlines)
-                log.write("\(client?.tty ?? "the client") is now on \(now)")
+                log.write("\(client.tty) is now on \(now)")
             }
         }
     }
 
     private static func activate(_ bundleID: String, log: OpenLog) {
+        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
+            requestActivation(of: running, bundleID: bundleID, log: log, state: "running")
+            return
+        }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
             log.write("activate \(bundleID): not installed")
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-            log.write("activate \(bundleID): \(error.map { "failed, \($0.localizedDescription)" } ?? "front")")
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { application, error in
+            guard error == nil, let application else {
+                log.write("activate \(bundleID): launch failed, \(error?.localizedDescription ?? "no application returned")")
+                return
+            }
+            DispatchQueue.main.async {
+                requestActivation(of: application, bundleID: bundleID, log: log, state: "launched")
+            }
+        }
+    }
+
+    /// AppKit's launch completion only says that Launch Services accepted the request. Explicitly
+    /// activate an existing app and then record what macOS actually put at the front.
+    private static func requestActivation(
+        of application: NSRunningApplication, bundleID: String, log: OpenLog, state: String
+    ) {
+        let requested = application.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        log.write("activate \(bundleID): \(state), request \(requested ? "accepted" : "rejected")")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) {
+            let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            if frontmost == bundleID {
+                log.write("activate \(bundleID): verified front")
+            } else {
+                log.write("activate \(bundleID): not front; frontmost \(frontmost ?? "none")")
+            }
         }
     }
 

@@ -5,11 +5,12 @@ import Testing
 @Suite("How many sessions fit on the strip")
 struct StripLayoutTests {
     @Test func theExpandedListStaysCompact() {
-        #expect(StripLayout.expandedWidth == 168)
+        #expect(StripLayout.expandedWidth == 236)
+        #expect(StripLayout.restingWidth == 64)
     }
 
     @Test func countsWholeItemsAfterThePaddingAndStopsAtThree() {
-        // 24pt of padding, the handle, one 51pt item and one more every 63pt, capped at three.
+        // The visible handle, 8pt insets, one full-ring item and one more every 58pt, capped at three.
         let firstItem = StripLayout.restPadding + StripLayout.restItemHeight
         #expect(StripLayout.restCapacity(height: 907) == 3)
         #expect(StripLayout.restCapacity(height: firstItem) == 1)
@@ -72,10 +73,9 @@ struct StripLayoutTests {
     }
 
     @Test func theDragHandleStaysFullyVisibleAtTheScreenEdge() {
-        #expect(StripLayout.handleHitWidth == 30)
-        #expect(StripLayout.handleMarkWidth == 22)
-        #expect((StripLayout.handleHitWidth - StripLayout.handleMarkWidth) / 2 == 4)
-        #expect(StripLayout.handleHitWidth / 2 == 15)
+        #expect(StripLayout.handleHitWidth == 56)
+        #expect(StripLayout.handleMarkWidth == 28)
+        #expect(StripLayout.handleHitWidth / 2 == 28)
     }
 
     // MARK: - Staying on the screen

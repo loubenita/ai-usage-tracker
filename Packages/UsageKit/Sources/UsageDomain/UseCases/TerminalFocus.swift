@@ -42,7 +42,8 @@ public struct TmuxClient: Sendable, Hashable {
 /// |---|---|
 /// | tmux | brings the tmux client's terminal forward, then `switch-client`, `select-window` and `select-pane` to the session's pane |
 /// | Terminal | selects the tab whose TTY is the session's, through Terminal's own scripting, and brings Terminal forward |
-/// | Warp, iTerm, Ghostty | brings the app forward; their tabs cannot be chosen from outside |
+/// | iTerm | selects the existing session, tab and window whose TTY is the session's, through iTerm's own scripting |
+/// | Warp, Ghostty | brings the app forward; their tabs cannot be chosen exactly from outside |
 /// | unknown | nothing, so the panel shows no Open button |
 public enum TerminalFocus {
     /// What `tmux list-panes` is asked, to find a pane by its TTY.
@@ -70,7 +71,9 @@ public enum TerminalFocus {
             return origin.hostTerminal.flatMap { bundleID(of: $0) == nil ? nil : .application($0) }
         case .terminal:
             return safeTTY(origin.tty) == nil ? .application(.terminal) : .session
-        case .warp, .iterm, .ghostty:
+        case .iterm:
+            return safeTTY(origin.tty) == nil ? .application(.iterm) : .session
+        case .warp, .ghostty:
             return bundleID(of: origin.terminal) == nil ? nil : .application(origin.terminal)
         case .unknown: return nil
         }
@@ -79,8 +82,9 @@ public enum TerminalFocus {
     public static func canOpen(_ origin: SessionOrigin) -> Bool { action(for: origin) != nil }
 
     /// The steps for a session. For tmux, `panes` and `clients` are what tmux reported when Open
-    /// was clicked: a pane found by the session's TTY stands in when its location is not known,
-    /// and the client showing the session is the one moved.
+    /// was clicked: a pane found by the session's TTY stands in when its location is not known.
+    /// A client already showing that session is selected first; the most recently used client is
+    /// only a fallback when the session is not currently displayed anywhere.
     public static func plan(
         for origin: SessionOrigin, panes: [TmuxPane] = [], clients: [TmuxClient] = []
     ) -> [TerminalFocusStep] {
@@ -90,7 +94,10 @@ public enum TerminalFocus {
         case .terminal:
             guard let tty = safeTTY(origin.tty) else { return activate(.terminal) }
             return [.run(program: "osascript", arguments: ["-e", terminalScript(tty: tty)])] + activate(.terminal)
-        case .warp, .iterm, .ghostty, .unknown:
+        case .iterm:
+            guard let tty = safeTTY(origin.tty) else { return activate(.iterm) }
+            return [.run(program: "osascript", arguments: ["-e", iTermScript(tty: tty)])] + activate(.iterm)
+        case .warp, .ghostty, .unknown:
             return activate(origin.terminal)
         }
     }
@@ -126,13 +133,10 @@ public enum TerminalFocus {
     private static func tmuxPlan(_ origin: SessionOrigin, panes: [TmuxPane], clients: [TmuxClient]) -> [TerminalFocusStep] {
         let host = origin.hostTerminal.map(activate) ?? []
         guard let location = location(for: origin, panes: panes).location else { return host }
-        // The client used most recently: the terminal tab the person is looking at. Warp,
-        // iTerm and Ghostty give no way to choose a tab from outside, so rather than leaving
-        // the session in a tab they cannot be sent to, it is brought to the tab they are in.
-        // A client already showing the session wins a tie, so nothing moves needlessly.
-        let client = mostRecent(clients, showing: location.session)
-        var switchClient = ["switch-client"]
-        if let client { switchClient += ["-c", client.tty] }
+        // Selecting a client that already shows this session lets tmux choose the correct
+        // terminal tab. Only when no client shows it do we fall back to the most recent client.
+        guard let client = mostRecent(clients, showing: location.session) else { return host }
+        var switchClient = ["switch-client", "-c", client.tty]
         // "=" asks for the session with exactly this name, not one that starts with it.
         switchClient += ["-t", "=" + location.session]
         var steps = host + [TerminalFocusStep.run(program: "tmux", arguments: switchClient)]
@@ -175,6 +179,28 @@ public enum TerminalFocus {
         """
     }
 
+    /// iTerm's own scripting: select the existing window, tab and split-pane session with this
+    /// TTY. It chooses objects only; it types and clicks nothing.
+    static func iTermScript(tty: String) -> String {
+        """
+        tell application "iTerm2"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with s in sessions of t
+                        if tty of s is "\(tty)" then
+                            select w
+                            select t
+                            select s
+                            return true
+                        end if
+                    end repeat
+                end repeat
+            end repeat
+            return false
+        end tell
+        """
+    }
+
     /// Reads `list-panes` output made with `listPanesArguments`.
     public static func panes(fromListPanes output: String) -> [TmuxPane] {
         output.split(separator: "\n").compactMap { line in
@@ -184,12 +210,18 @@ public enum TerminalFocus {
         }
     }
 
-    /// The client to move: the one used most recently, and among clients used at the same
-    /// moment, one already showing the session.
+    /// The client to move. A client already showing the session always wins; otherwise use the
+    /// most recently active client. Equal activity is resolved by TTY so a repeated click has a
+    /// stable target.
     public static func mostRecent(_ clients: [TmuxClient], showing session: String) -> TmuxClient? {
-        clients.max { left, right in
-            (left.activity, left.session == session ? 1 : 0) < (right.activity, right.session == session ? 1 : 0)
-        }
+        let displayingSession = clients.filter { $0.session == session }
+        return mostRecent(displayingSession.isEmpty ? clients : displayingSession)
+    }
+
+    private static func mostRecent(_ clients: [TmuxClient]) -> TmuxClient? {
+        clients.sorted { left, right in
+            left.activity == right.activity ? left.tty < right.tty : left.activity > right.activity
+        }.first
     }
 
     /// Reads `list-clients` output made with `listClientsArguments`.

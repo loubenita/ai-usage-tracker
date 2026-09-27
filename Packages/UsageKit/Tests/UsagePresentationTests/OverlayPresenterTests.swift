@@ -37,7 +37,6 @@ struct OverlayPresenterTests {
         // The panel keeps the cumulative number and names it as a total.
         #expect(presenter.panel(try await Self.fakeReport(), sessionID: "s_bug")?.stats
             .first { $0.label == "Total tokens" }?.value == "1.1M")
-        // Short enough for the 30pt strip; the panel says "1h 47m" in full.
         #expect(strip.items.map(\.time) == ["1h47", "23m", "58m"])
         #expect(strip.items.map(\.ring.isNearlyFull) == [false, false, true])
         #expect(strip.items.map(\.ring.agent) == [.claudeCode, .claudeCode, .codex])
@@ -46,11 +45,13 @@ struct OverlayPresenterTests {
         #expect(strip.items.allSatisfy { $0.highlight == .none })
     }
 
-    @Test func theExpandedStripKeepsOnlyTheShortTaskIdentity() async throws {
+    @Test func theExpandedStripShowsProjectBranchAndTimeInsteadOfAnAccountName() async throws {
         let strip = presenter.strip(try await Self.fakeReport(), hovered: nil, open: nil, acknowledged: [])
         #expect(strip.items.map(\.title) == ["Video generation", "Image generation", "Bug fixes"])
-        // Provider, project and first ask remain available to assistive technology and in the
-        // selected session panel without making every strip row tall and wide.
+        #expect(strip.items.map(\.project) == ["Marketing Studio", "Marketing Studio", "OpenKitchen"])
+        #expect(strip.items.map(\.branch) == ["feat/render-retry", "feat/image-gen-v2", "fix/checkout-rounding"])
+        #expect(strip.items.map(\.time) == ["1h47", "23m", "58m"])
+        // Provider and first ask remain available to assistive technology.
         #expect(strip.items[1].accessibilityLabel.contains("Claude"))
         #expect(strip.items[1].accessibilityLabel.contains("Marketing Studio"))
         #expect(strip.items[1].accessibilityLabel.contains("Add retry to the image generation call"))
@@ -92,11 +93,11 @@ struct OverlayPresenterTests {
 
     @Test func theSessionPanelMatchesFrame3() async throws {
         let panel = try #require(presenter.panel(try await Self.fakeReport(), sessionID: "s_img"))
-        #expect(panel.subtitle == "Marketing Studio")
+        #expect(panel.subtitle == "Marketing Studio · feat/image-gen-v2")
         #expect(panel.title == "Image generation")
         #expect(panel.agent == .claudeCode)
         #expect(panel.openAction == .terminal("Warp"))
-        #expect(panel.status == StatusModel(kind: .waiting, text: "Waiting for your reply · 4m", place: "Warp"))
+        #expect(panel.status == StatusModel(kind: .waiting, text: "Ready for input · 4m", place: "Warp"))
         #expect(panel.stats == [
             StatModel(label: "Total spent", value: "$1.10"), StatModel(label: "Total tokens", value: "280k"),
             StatModel(label: "Active", value: "23m"), StatModel(label: "Turns", value: "18"),
@@ -135,18 +136,19 @@ struct OverlayPresenterTests {
     /// A session detected in a terminal, with the given turns and no limits.
     func detected(
         turns: [Turn], terminal: TerminalApp = .warp, snapshot: SessionSnapshot? = nil,
-        accountName: String? = nil
+        accountName: String? = nil,
+        tag: WorkTag = WorkTag(project: "ai-usage-tracker", concern: "main"),
+        branch: String? = "main"
     ) -> UsageReport {
         let origin = SessionOrigin(
             pid: 3857, tty: "ttys002", terminal: terminal,
             folder: "/Users/me/ai-usage-tracker", accountName: accountName
         )
-        let tag = WorkTag(project: "ai-usage-tracker", concern: "main")
         let start = Date(timeIntervalSince1970: 1_790_000_000)
         var events = [SessionEvent(
             timestamp: start, agent: .claudeCode, sessionID: "claude-code-3857", kind: .start, state: .working,
             activeDuration: 0, idleDuration: 0, work: tag,
-            workDetail: Work(tag: tag, branch: "main", folder: origin.folder), origin: origin
+            workDetail: Work(tag: tag, branch: branch, folder: origin.folder), origin: origin
         )]
         if let snapshot {
             events.append(SessionEvent(
@@ -162,11 +164,38 @@ struct OverlayPresenterTests {
     @Test func theSessionShowsItsAccountWhenKnown() throws {
         let report = detected(turns: [], accountName: "Work")
         let strip = presenter.strip(report, hovered: nil, open: nil, acknowledged: [])
-        #expect(strip.items.first?.account == "Work")
+        #expect(strip.items.first?.project == "ai-usage-tracker")
+        #expect(strip.items.first?.branch == "main")
+        #expect(strip.items.first?.time == "1h30")
         #expect(strip.items.first?.accessibilityLabel.contains("account Work") == true)
         let panel = try #require(presenter.panel(report, sessionID: "claude-code-3857"))
-        #expect(panel.subtitle == "ai-usage-tracker · Work")
+        #expect(panel.subtitle == "ai-usage-tracker · main · Work")
         #expect(panel.details.first { $0.label == "Account" }?.value == "Work")
+    }
+
+    @Test func iTermSessionsOfferExactSessionSelection() throws {
+        let panel = try #require(presenter.panel(detected(turns: [], terminal: .iterm), sessionID: "claude-code-3857"))
+        #expect(panel.openAction == .session)
+    }
+
+    @Test func defaultAccountIsNotPresentedAsSessionContext() throws {
+        let report = detected(turns: [], accountName: "Default")
+        let strip = presenter.strip(report, hovered: nil, open: nil, acknowledged: [])
+        #expect(strip.items.first?.project == "ai-usage-tracker")
+        #expect(strip.items.first?.branch == "main")
+        #expect(strip.items.first?.accessibilityLabel.contains("account Default") == false)
+        let panel = try #require(presenter.panel(report, sessionID: "claude-code-3857"))
+        #expect(panel.subtitle == "ai-usage-tracker · main")
+        #expect(panel.details.contains { $0.label == "Account" } == false)
+    }
+
+    @Test func stripContextKeepsDelimiterCharactersInsideProjectAndBranch() throws {
+        let tag = WorkTag(project: "platform · services", concern: "Overlay")
+        let report = detected(turns: [], tag: tag, branch: "feature · session-strip")
+        let item = try #require(presenter.strip(report, hovered: nil, open: nil, acknowledged: []).items.first)
+        #expect(item.project == "platform · services")
+        #expect(item.branch == "feature · session-strip")
+        #expect(item.time == "1h30")
     }
 
     @Test func whatTheAgentDidNotReportIsLeftOutNotShownAsZero() throws {
