@@ -56,6 +56,9 @@ public struct SessionOrigin: Sendable, Hashable {
     /// A name the person gave the session, such as `claude --name lead`. Names the agent
     /// made up itself are left out.
     public let sessionName: String?
+    /// The profile this session uses, when its agent exposes one.
+    public let accountName: String?
+    public let accountID: String?
     /// The session runs in the user's home folder.
     public let isHomeFolder: Bool
     /// Where in tmux the session runs, when it runs inside tmux and that is known.
@@ -71,6 +74,8 @@ public struct SessionOrigin: Sendable, Hashable {
         agentSessionID: String? = nil,
         transcriptPath: String? = nil,
         sessionName: String? = nil,
+        accountName: String? = nil,
+        accountID: String? = nil,
         isHomeFolder: Bool = false,
         tmux: TmuxLocation? = nil,
         hostTerminal: TerminalApp? = nil
@@ -84,6 +89,8 @@ public struct SessionOrigin: Sendable, Hashable {
         self.agentSessionID = agentSessionID
         self.transcriptPath = transcriptPath
         self.sessionName = sessionName
+        self.accountName = accountName
+        self.accountID = accountID
         self.isHomeFolder = isHomeFolder
     }
 }

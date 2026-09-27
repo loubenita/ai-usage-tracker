@@ -23,11 +23,24 @@ public struct OverlayPresenter: Sendable {
         acknowledged: Set<String>,
         expanded: Bool = true
     ) -> StripModel {
-        // Which sessions were busy most recently, so the resting strip can show those first.
-        let byRecency = report.sessions
-            .sorted { $0.summary.lastActivityAt > $1.summary.lastActivityAt }
-            .enumerated()
-            .reduce(into: [String: Int]()) { $0[$1.element.id] = $1.offset }
+        // Equal weight to spend and context fullness. Unknown readings rank last for that
+        // measure; recent activity breaks ties so the collapsed list remains predictable.
+        let sessions = report.sessions
+        let bySpend = sessions.sorted { lhs, rhs in
+            (lhs.summary.costUSD ?? -1) > (rhs.summary.costUSD ?? -1)
+        }
+        let byContext = sessions.sorted { lhs, rhs in
+            (lhs.summary.context?.fraction ?? -1) > (rhs.summary.context?.fraction ?? -1)
+        }
+        let spendRank = Dictionary(uniqueKeysWithValues: bySpend.enumerated().map { ($0.element.id, $0.offset) })
+        let contextRank = Dictionary(uniqueKeysWithValues: byContext.enumerated().map { ($0.element.id, $0.offset) })
+        let priority = sessions.sorted { lhs, rhs in
+            let left = (spendRank[lhs.id] ?? 0) + (contextRank[lhs.id] ?? 0)
+            let right = (spendRank[rhs.id] ?? 0) + (contextRank[rhs.id] ?? 0)
+            if left != right { return left < right }
+            return lhs.summary.lastActivityAt > rhs.summary.lastActivityAt
+        }
+        let priorityRank = Dictionary(uniqueKeysWithValues: priority.enumerated().map { ($0.element.id, $0.offset) })
         let items = report.sessions.map { session in
             let summary = session.summary
             let highlight: ItemHighlight =
@@ -38,14 +51,16 @@ public struct OverlayPresenter: Sendable {
                 title: session.title,
                 // Short, so it fits the 30pt strip; the panel says it in full.
                 time: format.compactDuration(summary.activeDuration),
+                account: summary.origin?.accountName,
                 needsUser: summary.needsUser,
                 pulses: summary.needsUser && !acknowledged.contains(summary.id),
                 highlight: highlight,
-                recency: byRecency[summary.id] ?? 0,
+                priority: priorityRank[summary.id] ?? 0,
                 accessibilityLabel: [
                     session.title,
                     summary.agent.displayName,
                     summary.work.tag.project,
+                    summary.origin?.accountName.map { "account \($0)" },
                     summary.activity?.firstAsk,
                     format.duration(summary.activeDuration),
                     summary.context.map {
@@ -66,7 +81,8 @@ public struct OverlayPresenter: Sendable {
         return SessionPanelModel(
             sessionID: sessionID,
             agent: summary.agent,
-            subtitle: summary.work.tag.project,
+            subtitle: [summary.work.tag.project, summary.origin?.accountName]
+                .compactMap { $0 }.joined(separator: " · "),
             title: session.title,
             openAction: summary.origin.flatMap(openAction),
             status: status(session, report: report),
@@ -193,6 +209,7 @@ public struct OverlayPresenter: Sendable {
             ),
             work.isEmpty ? nil : DetailRowModel(label: "Work", value: work.joined(separator: " · ")),
             summary.work.branch.map { DetailRowModel(label: "Branch", value: $0) },
+            summary.origin?.accountName.map { DetailRowModel(label: "Account", value: $0) },
             activity?.firstAsk.map { DetailRowModel(label: "First ask", value: quoted($0)) },
         ].compactMap { $0 }
     }

@@ -51,8 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// A state to force at launch, so screenshots need no mouse or keyboard input:
 /// `--state rest|hover|drag|open-session|open-session-details|open-today|open-week|open-month`.
-/// `drag` shows the
-/// full strip picked up, as Paper frame 7 does. Hover grows the strip as
+/// `drag` shows the compact strip while it is being moved. Hover grows the strip as
 /// the pointer does. `open-session` opens the Image generation session, as the Paper frames do;
 /// `open-session-details` also reveals its details disclosure;
 /// `--session <id>` picks another. `open-today`, `open-week` and `open-month` open the usage

@@ -9,12 +9,9 @@ import SwiftUI
 /// When there are more sessions than the screen has room for, the half strip shows as many
 /// as fit and a "+N" item for the rest, and the full strip scrolls.
 ///
-/// It is dragged by the visible handle at its top. Nothing happens until the pointer has moved
-/// `StripLayout.dragThreshold`; then the full strip follows the pointer up and down the edge.
-/// Keeping its size prevents the handle from moving out from under the pointer mid-drag.
-///
-/// The handle stays the same distance from the screen edge at both widths, so expansion does
-/// not move it away before the press. Its gesture does not compete with row scrolling.
+/// The handle appears when expanded. After the drag threshold the whole strip becomes compact
+/// and follows the pointer up and down the edge. The handle remains the same gesture target
+/// through the transition, so the drag continues without competing with row scrolling.
 struct StripView: View {
     let model: StripModel
     /// The height the screen gives the strip.
@@ -41,16 +38,18 @@ struct StripView: View {
     var body: some View {
         Group {
             if model.isExpanded {
-                FullStrip(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage, handle: handle)
+                FullStrip(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage)
             } else {
                 HalfStrip(
                     model: model,
                     capacity: StripLayout.restCapacity(
                         height: availableHeight, showingChip: model.items.count > StripLayout.restLimit
-                    ),
-                    handle: handle
+                    )
                 )
             }
+        }
+        .overlay(alignment: .topTrailing) {
+            handle.opacity(model.isExpanded ? 1 : 0)
         }
         .contentShape(.rect)
         .offset(y: offset)
@@ -107,20 +106,17 @@ struct StripView: View {
 
 // MARK: - Frame 1: at rest
 
-private struct HalfStrip<Handle: View>: View {
+private struct HalfStrip: View {
     let model: StripModel
     let capacity: Int
-    /// Always visible so the strip's movable affordance is discoverable.
-    let handle: Handle?
 
     var body: some View {
-        // The sessions whose work changed most recently, newest first, and "+N" for the rest.
-        let recent = model.items.sorted { $0.recency < $1.recency }
-        let visible = StripLayout.visible(count: recent.count, capacity: capacity)
+        // The highest priority sessions, followed by "+N" for the rest.
+        let ranked = model.items.sorted { $0.priority < $1.priority }
+        let visible = StripLayout.visible(count: ranked.count, capacity: capacity)
         VStack(alignment: .trailing, spacing: 0) {
             VStack(alignment: .trailing, spacing: 12) {
-            if let handle { handle.frame(width: 29, alignment: .trailing) }
-            ForEach(recent.prefix(visible.shown)) { item in
+            ForEach(ranked.prefix(visible.shown)) { item in
                 VStack(alignment: .trailing, spacing: 3) {
                     HalfRing(model: item.ring)
                         .overlay(alignment: .topLeading) {
@@ -198,19 +194,16 @@ private struct HalfRing: View {
 
 // MARK: - Frame 2: pointer over the strip
 
-private struct FullStrip<Handle: View>: View {
+private struct FullStrip: View {
     let model: StripModel
     let onHover: (_ sessionID: String, _ inside: Bool) -> Void
     let onClick: (String) -> Void
     let onUsage: () -> Void
-    /// The bar above the first session, there whenever the strip is open.
-    let handle: Handle
 
     var body: some View {
         // The expanded strip is a readable session list rather than a column of anonymous rings.
         VStack(spacing: 0) {
-            // Aligned like the resting handle, so hover expansion leaves it under the pointer.
-            handle.frame(width: StripLayout.expandedWidth, alignment: .trailing)
+            Color.clear.frame(height: StripLayout.handleBand)
             // All the items when they fit; otherwise the same items in a list that scrolls.
             ViewThatFits(in: .vertical) {
                 items
@@ -254,7 +247,7 @@ private struct StripItemView: View {
                     .foregroundStyle(Theme.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text(item.time)
+                Text([item.account, item.time].compactMap { $0 }.joined(separator: " · "))
                     .font(TypeScale.font(TypeScale.caption, .medium))
                     .foregroundStyle(Theme.timer)
                     .lineLimit(1)

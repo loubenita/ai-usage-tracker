@@ -23,8 +23,14 @@ public final class OverlayViewModel {
     /// Whether the usage button's panel is open. It shows every agent, so no session is selected.
     public private(set) var isOverviewOpen = false
     /// The usage panel's period and whose usage it shows.
-    public var usagePeriod: UsagePeriod = .today
+    public var usagePeriod: UsagePeriod = .today {
+        didSet {
+            if oldValue != usagePeriod { selectedUsageBucketStart = nil }
+        }
+    }
     public var usageFilter: AgentFilter = .all
+    /// The selected day in Week or week in Month. Nil lets the presenter choose the current bar.
+    public private(set) var selectedUsageBucketStart: Date?
     /// Sessions whose "needs you" dot has been seen by hovering, so it stops pulsing.
     public private(set) var acknowledgedSessionIDs: Set<String> = []
     public private(set) var loadError: String?
@@ -236,7 +242,14 @@ public final class OverlayViewModel {
             isOverviewOpen = true
             usagePeriod = .today
             usageFilter = .all
+            selectedUsageBucketStart = nil
         }
+    }
+
+    /// Picking a chart bar changes the historical spend detail only. Account limits remain live.
+    public func selectUsageBucket(_ start: Date) {
+        guard usagePeriod != .today else { return }
+        selectedUsageBucketStart = start
     }
 
     /// The session panel's Open button: brings the session's terminal to the front. It runs
@@ -273,10 +286,8 @@ public final class OverlayViewModel {
 
     public var isOpen: Bool { openSessionID != nil || isOverviewOpen }
 
-    /// The full strip shows while the pointer is over it or a panel is open, and it keeps that
-    /// size while it is dragged: changing size mid-drag moved the handle out from under the
-    /// pointer and ended the drag.
-    public var isStripExpanded: Bool { isPointerOverStrip || isOpen || isDraggingStrip }
+    /// Hover or an open panel expands the strip. Dragging makes the entire strip compact.
+    public var isStripExpanded: Bool { !isDraggingStrip && (isPointerOverStrip || isOpen) }
 
     // MARK: - What to draw
 
@@ -300,7 +311,10 @@ public final class OverlayViewModel {
     public var overview: UsagePanelModel? {
         guard let report, isOverviewOpen else { return nil }
         return usagePresenter.panel(
-            report, filter: usageFilter, period: usagePeriod,
+            report,
+            filter: usageFilter,
+            period: usagePeriod,
+            selectedBucketStart: selectedUsageBucketStart,
             refresh: isRefreshingTotals ? .refreshing : nextTotalsAt.map { .next(in: $0.timeIntervalSince(report.now)) }
         )
     }

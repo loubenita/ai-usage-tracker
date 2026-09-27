@@ -99,6 +99,7 @@ public struct OverlayView: View {
                 model: usage,
                 onSelectAgent: { viewModel.usageFilter = $0 },
                 onSelectPeriod: { viewModel.usagePeriod = $0 },
+                onSelectBucket: { viewModel.selectUsageBucket($0) },
                 onRefresh: { viewModel.refreshTotalsNow() }
             )
         } else if let panel = viewModel.panel {

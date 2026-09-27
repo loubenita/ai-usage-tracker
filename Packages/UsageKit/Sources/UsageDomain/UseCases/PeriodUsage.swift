@@ -49,6 +49,18 @@ public struct TokenBucket: Sendable, Hashable {
     public let workingTime: TimeInterval
 }
 
+/// The detail behind one visible Week or Month chart bar. It deliberately carries the same
+/// kinds of totals as its parent period, so choosing an empty bar has empty detail rather than
+/// falling back to the period's totals.
+public struct PeriodBucketUsage: Sendable, Hashable {
+    public let start: Date
+    public let workingTime: TimeInterval
+    public let agents: [AgentPeriodUsage]
+    public let unused: [Agent]
+    public let byWork: [WorkTime]
+    public let byModel: [ModelShare]
+}
+
 /// Everything the overview shows for one period, agent by agent.
 public struct PeriodUsage: Sendable, Hashable {
     public let period: UsagePeriod
@@ -62,6 +74,8 @@ public struct PeriodUsage: Sendable, Hashable {
     /// The agents whose tokens the chart counts, and the chart's bars (empty for Today).
     public let tokenAgents: [Agent]
     public let buckets: [TokenBucket]
+    /// Detail for every chart bar, in the same order as `buckets`.
+    public let bucketUsage: [PeriodBucketUsage]
     /// Most-used model first.
     public let byModel: [ModelShare]
     /// The same period for each agent on its own, as the overview's agent picker shows it.
@@ -71,6 +85,24 @@ public struct PeriodUsage: Sendable, Hashable {
 
     public func usage(of agent: Agent) -> AgentPeriodUsage? {
         agents.first { $0.agent == agent }
+    }
+
+    /// The totals behind a chart bar. A selected empty bucket is still a period with no usage.
+    public func selecting(bucketStart: Date) -> PeriodUsage? {
+        guard let selected = bucketUsage.first(where: { $0.start == bucketStart }) else { return nil }
+        return PeriodUsage(
+            period: period,
+            start: selected.start,
+            workingTime: selected.workingTime,
+            agents: selected.agents,
+            unused: selected.unused,
+            byWork: selected.byWork,
+            tokenAgents: selected.agents.filter { $0.tokens != nil }.map(\.agent),
+            buckets: [],
+            bucketUsage: [],
+            byModel: selected.byModel,
+            byAgent: byAgent.compactMapValues { $0.selecting(bucketStart: bucketStart) }
+        )
     }
 }
 
@@ -105,8 +137,56 @@ public enum PeriodUsageBuilder {
         bucketStarts: [Date],
         openAgents: Set<Agent>
     ) -> PeriodUsage {
-        let byAgent = Dictionary(grouping: inPeriod, by: \.agent)
-        let agents = trackedAgents.compactMap { agent -> AgentPeriodUsage? in
+        let agents = makeAgents(inPeriod, openAgents: openAgents)
+        let used = Set(agents.map(\.agent))
+        let total = agents.reduce(0) { $0 + $1.workingTime }
+        let byWork = workTimes(inPeriod, total: total)
+
+        let tokenAgents = agents.filter { $0.tokens != nil }.map(\.agent)
+        let bucketRanges = bucketStarts.enumerated().map { index, bucketStart in
+            let end = index + 1 < bucketStarts.count ? bucketStarts[index + 1] : .distantFuture
+            return (start: bucketStart, turns: inPeriod.filter {
+                $0.timestamp >= max(bucketStart, start) && $0.timestamp < end
+            })
+        }
+        let buckets = bucketRanges.map { bucket in
+            TokenBucket(
+                start: bucket.start,
+                tokens: bucket.turns.reduce(0) { $0 + ($1.tokens?.total ?? 0) },
+                workingTime: workingTime(bucket.turns)
+            )
+        }
+        let bucketUsage = bucketRanges.map { bucket in
+            let bucketAgents = makeAgents(bucket.turns, openAgents: [])
+            let bucketTotal = bucketAgents.reduce(0) { $0 + $1.workingTime }
+            return PeriodBucketUsage(
+                start: bucket.start,
+                workingTime: bucketTotal,
+                agents: bucketAgents,
+                unused: trackedAgents.filter { !Set(bucketAgents.map(\.agent)).contains($0) },
+                byWork: workTimes(bucket.turns, total: bucketTotal),
+                byModel: modelShares(bucket.turns)
+            )
+        }
+
+        return PeriodUsage(
+            period: period,
+            start: start,
+            workingTime: total,
+            agents: agents,
+            unused: trackedAgents.filter { !used.contains($0) },
+            byWork: byWork,
+            tokenAgents: tokenAgents,
+            buckets: buckets,
+            bucketUsage: bucketUsage,
+            byModel: modelShares(inPeriod),
+            byAgent: [:]
+        )
+    }
+
+    private static func makeAgents(_ turns: [Turn], openAgents: Set<Agent>) -> [AgentPeriodUsage] {
+        let byAgent = Dictionary(grouping: turns, by: \.agent)
+        return trackedAgents.compactMap { agent -> AgentPeriodUsage? in
             let turns = byAgent[agent] ?? []
             guard !turns.isEmpty || openAgents.contains(agent) else { return nil }
             let tokens = Breakdown.totalTokens(turns)?.total
@@ -123,37 +203,14 @@ public enum PeriodUsageBuilder {
             )
         }
         .sorted { ($0.workingTime, -rank($0.agent)) > ($1.workingTime, -rank($1.agent)) }
-        let used = Set(agents.map(\.agent))
-        let total = agents.reduce(0) { $0 + $1.workingTime }
+    }
 
-        let byWork = Dictionary(grouping: inPeriod, by: \.work.tag)
+    private static func workTimes(_ turns: [Turn], total: TimeInterval) -> [WorkTime] {
+        Dictionary(grouping: turns, by: \.work.tag)
             .map { tag, turns in (tag: tag, time: workingTime(turns), agent: mainAgent(turns)) }
             .filter { $0.time > 0 }
             .map { WorkTime(tag: $0.tag, workingTime: $0.time, share: total > 0 ? $0.time / total : 0, agent: $0.agent) }
             .sorted { ($0.workingTime, $0.tag.concern) > ($1.workingTime, $1.tag.concern) }
-
-        let tokenAgents = agents.filter { $0.tokens != nil }.map(\.agent)
-        let buckets = bucketStarts.enumerated().map { index, bucketStart in
-            let end = index + 1 < bucketStarts.count ? bucketStarts[index + 1] : .distantFuture
-            let inBucket = inPeriod.filter { $0.timestamp >= max(bucketStart, start) && $0.timestamp < end }
-            return TokenBucket(
-                start: bucketStart, tokens: inBucket.reduce(0) { $0 + ($1.tokens?.total ?? 0) },
-                workingTime: workingTime(inBucket)
-            )
-        }
-
-        return PeriodUsage(
-            period: period,
-            start: start,
-            workingTime: total,
-            agents: agents,
-            unused: trackedAgents.filter { !used.contains($0) },
-            byWork: byWork,
-            tokenAgents: tokenAgents,
-            buckets: buckets,
-            byModel: modelShares(inPeriod),
-            byAgent: [:]
-        )
     }
 
     /// Each model's share of the tokens; of the working time when no model reported tokens.
@@ -196,7 +253,7 @@ private extension PeriodUsage {
     func with(byAgent: [Agent: PeriodUsage]) -> PeriodUsage {
         PeriodUsage(
             period: period, start: start, workingTime: workingTime, agents: agents, unused: unused, byWork: byWork,
-            tokenAgents: tokenAgents, buckets: buckets, byModel: byModel, byAgent: byAgent
+            tokenAgents: tokenAgents, buckets: buckets, bucketUsage: bucketUsage, byModel: byModel, byAgent: byAgent
         )
     }
 }

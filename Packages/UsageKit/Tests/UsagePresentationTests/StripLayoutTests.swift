@@ -8,10 +8,10 @@ struct StripLayoutTests {
         #expect(StripLayout.expandedWidth == 168)
     }
 
-    @Test func countsWholeItemsAfterThePaddingAndStopsAtFive() {
-        // 24pt of padding, the handle, one 51pt item and one more every 63pt, capped at five.
-        let firstItem = StripLayout.restPadding + StripLayout.restHandle + StripLayout.restItemHeight
-        #expect(StripLayout.restCapacity(height: 907) == 5)
+    @Test func countsWholeItemsAfterThePaddingAndStopsAtThree() {
+        // 24pt of padding, the handle, one 51pt item and one more every 63pt, capped at three.
+        let firstItem = StripLayout.restPadding + StripLayout.restItemHeight
+        #expect(StripLayout.restCapacity(height: 907) == 3)
         #expect(StripLayout.restCapacity(height: firstItem) == 1)
         #expect(StripLayout.restCapacity(height: firstItem + StripLayout.restItemPitch) == 2)
         #expect(StripLayout.restCapacity(height: firstItem + StripLayout.restItemPitch - 1) == 1)
@@ -21,21 +21,19 @@ struct StripLayoutTests {
         #expect(StripLayout.restCapacity(height: 10) == 1)
     }
 
-    @Test func showsEverySessionWhenTheyFit() {
-        #expect(StripLayout.visible(count: 4, capacity: 5) == (4, 0))
-        #expect(StripLayout.visible(count: 5, capacity: 5) == (5, 0))
+    @Test func showsThreeSessionsWhenTheyFit() {
+        #expect(StripLayout.visible(count: 3, capacity: 3) == (3, 0))
+        #expect(StripLayout.visible(count: 5, capacity: 3) == (3, 2))
     }
 
     @Test func theChipCountsTheRestWithoutTakingASessionsPlace() {
-        // Nine sessions, room for five: five rings and "+4", not four and "+5".
-        #expect(StripLayout.visible(count: 9, capacity: 5) == (5, 4))
-        // The band needs its own room at the foot, so a screen that fits five rings without
-        // it fits four with it.
-        let fiveRings = StripLayout.restPadding + StripLayout.restHandle
-            + StripLayout.restItemHeight + 4 * StripLayout.restItemPitch
-        #expect(StripLayout.restCapacity(height: fiveRings) == 5)
-        #expect(StripLayout.restCapacity(height: fiveRings, showingChip: true) == 4)
-        #expect(StripLayout.restCapacity(height: fiveRings + StripLayout.restChip, showingChip: true) == 5)
+        // Nine sessions, room for three: three rings and "+6".
+        #expect(StripLayout.visible(count: 9, capacity: 3) == (3, 6))
+        let threeRings = StripLayout.restPadding + StripLayout.restItemHeight
+            + 2 * StripLayout.restItemPitch
+        #expect(StripLayout.restCapacity(height: threeRings) == 3)
+        #expect(StripLayout.restCapacity(height: threeRings, showingChip: true) == 2)
+        #expect(StripLayout.restCapacity(height: threeRings + StripLayout.restChip, showingChip: true) == 3)
     }
 
     // MARK: - Dragging

@@ -19,26 +19,51 @@ public struct UsagePanelPresenter: Sendable {
     }
 
     public func panel(
-        _ report: UsageReport, filter: AgentFilter, period: UsagePeriod, refresh: UsageRefresh? = nil
+        _ report: UsageReport,
+        filter: AgentFilter,
+        period: UsagePeriod,
+        selectedBucketStart: Date? = nil,
+        refresh: UsageRefresh? = nil
     ) -> UsagePanelModel {
         let agents = pickerAgents(report)
         // An agent that has gone from the picker takes the panel back to All.
         let selected: AgentFilter = if case .agent(let agent) = filter, !agents.contains(agent) { .all } else { filter }
         let picker = [PickerItemModel(filter: .all, name: "All", agent: nil)]
             + agents.map { PickerItemModel(filter: .agent($0), name: $0.displayName, agent: $0) }
+        let periodUsage = report.periods[period]
+        let bucketStart = resolvedBucketStart(periodUsage, period: period, requested: selectedBucketStart)
+        let selectedUsage = bucketStart.flatMap { periodUsage?.selecting(bucketStart: $0) }
         let content: UsageContent = switch selected {
-        case .all: .all(all(report, period: period, agents: agents))
-        case .agent(let agent): .agent(agentView(report, agent: agent, period: period))
+        // The All view has no chart to make a bucket selection, so its THIS WEEK / THIS MONTH
+        // table always remains the full period aggregate.
+        case .all: .all(all(report, usage: periodUsage, period: period, agents: agents))
+        case .agent(let agent): .agent(agentView(
+            report, agent: agent, period: period, selectedUsage: selectedUsage, selectedBucketStart: bucketStart
+        ))
         }
         return UsagePanelModel(
-            picker: picker, selected: selected, period: period, refreshLabel: refresh.map(refreshLabel), content: content
+            picker: picker,
+            selected: selected,
+            period: period,
+            selectedBucketStart: bucketStart,
+            refreshLabel: refresh.map(refreshLabel),
+            content: content
         )
+    }
+
+    /// Week defaults to today and Month to the current week. A bucket that disappeared after
+    /// refresh also goes to the current bucket, rather than displaying an unrelated period.
+    func resolvedBucketStart(_ usage: PeriodUsage?, period: UsagePeriod, requested: Date?) -> Date? {
+        guard period != .today, let usage, !usage.buckets.isEmpty else { return nil }
+        if let requested, usage.buckets.contains(where: { $0.start == requested }) { return requested }
+        return usage.buckets.last?.start
     }
 
     /// Every agent with something to show this month: replies, a limit, or an open session.
     func pickerAgents(_ report: UsageReport) -> [Agent] {
         var found = Set(report.periods[.month]?.agents.map(\.agent) ?? [])
         found.formUnion(report.limitsByAgent.keys)
+        found.formUnion(report.accounts.map(\.agent))
         found.formUnion(report.sessions.map(\.summary.agent))
         return Agent.allCases.filter(found.contains)
     }
@@ -56,8 +81,12 @@ public struct UsagePanelPresenter: Sendable {
 
     // MARK: - All agents
 
-    func all(_ report: UsageReport, period: UsagePeriod, agents: [Agent]) -> AllAgentsModel {
-        let usage = report.periods[period]
+    func all(
+        _ report: UsageReport,
+        usage: PeriodUsage?,
+        period: UsagePeriod,
+        agents: [Agent]
+    ) -> AllAgentsModel {
         let rows = agents.compactMap { agent -> AgentTableRowModel? in
             let used = usage?.usage(of: agent)
             let time = workingTime(used, agent: agent, report: report)
@@ -72,13 +101,25 @@ public struct UsagePanelPresenter: Sendable {
         let costs = used.compactMap(\.costUSD)
         let total = rows.count > 1 ? AgentTableRowModel(
             agent: nil, name: "All agents",
-            time: timeText(agents.reduce(0) { $0 + workingTime(usage?.usage(of: $1), agent: $1, report: report) }),
+            time: timeText(agents.reduce(0) {
+                $0 + workingTime(usage?.usage(of: $1), agent: $1, report: report)
+            }),
             tokens: tokens.isEmpty ? nil : format.tokens(tokens.reduce(0, +)),
             spend: costs.isEmpty ? nil : format.usd(costs.reduce(0, +))
         ) : nil
         return AllAgentsModel(
             headline: headline(report.limitsByAgent, now: report.now),
-            limits: agents.flatMap { limitRows($0, limits: report.limits(for: $0), now: report.now) },
+            limits: agents.flatMap { agent in
+                let accounts = report.accounts.filter { $0.agent == agent }
+                return accounts.isEmpty
+                    ? limitRows(agent, limits: report.limits(for: agent), now: report.now)
+                    : accounts.flatMap {
+                        limitRows(
+                            agent, limits: $0.limits, now: report.now,
+                            account: $0.name, accountID: $0.id, snapshot: $0.snapshot
+                        )
+                    }
+            },
             tableTitle: Self.tableTitle(period),
             rows: rows,
             total: total,
@@ -139,19 +180,39 @@ public struct UsagePanelPresenter: Sendable {
     }
 
     /// Each limit the agent shares, or one "no data" row.
-    func limitRows(_ agent: Agent, limits: AgentLimits, now: Date) -> [LimitListRowModel] {
+    func limitRows(
+        _ agent: Agent, limits: AgentLimits, now: Date,
+        account: String? = nil, accountID: String? = nil,
+        snapshot: AccountUsageSnapshot? = nil
+    ) -> [LimitListRowModel] {
         let standings = limits.standings
+        let label = [agent.displayName, account].compactMap { $0 }.joined(separator: " · ")
+        if standings.isEmpty, let snapshot {
+            return [
+                ("5-hour", snapshot.fiveHourPercent), ("week", snapshot.weeklyPercent)
+            ].compactMap { window, percent in
+                guard let percent else { return nil }
+                return LimitListRowModel(
+                    id: "\(agent.rawValue)-\(accountID ?? "default")-\(window)",
+                    agent: agent, name: "\(label) \(window)", fraction: percent / 100,
+                    used: format.percentPoints(percent),
+                    freesUp: now.timeIntervalSince(snapshot.readAt) > 15 * 60
+                        ? "Last read \(format.shortMoment(snapshot.readAt, now: now))" : "",
+                    isNearlyUsed: percent >= LimitStanding.warningPercent
+                )
+            }
+        }
         guard !standings.isEmpty else {
             return [LimitListRowModel(
-                id: "\(agent.rawValue)-none", agent: agent, name: agent.displayName, fraction: nil, used: "",
+                id: "\(agent.rawValue)-\(accountID ?? "none")-none", agent: agent, name: label, fraction: nil, used: "",
                 freesUp: "no data", isNearlyUsed: false
             )]
         }
         return standings.map { standing in
             LimitListRowModel(
-                id: "\(agent.rawValue)-\(standing.kind)",
+                id: "\(agent.rawValue)-\(accountID ?? "default")-\(standing.kind)",
                 agent: agent,
-                name: "\(agent.displayName) \(Self.shortWindow(standing.kind))",
+                name: "\(label) \(Self.shortWindow(standing.kind))",
                 fraction: standing.usedPercent / 100,
                 used: format.percentPoints(standing.usedPercent),
                 freesUp: standing.resetsAt.map { format.shortMoment($0, now: now) } ?? "",
@@ -170,21 +231,44 @@ public struct UsagePanelPresenter: Sendable {
 
     // MARK: - One agent
 
-    func agentView(_ report: UsageReport, agent: Agent, period: UsagePeriod) -> AgentUsageModel {
-        let usage = report.periods[period]?.byAgent[agent]
+    func agentView(
+        _ report: UsageReport,
+        agent: Agent,
+        period: UsagePeriod,
+        selectedUsage: PeriodUsage?,
+        selectedBucketStart: Date?
+    ) -> AgentUsageModel {
+        let fullUsage = report.periods[period]?.byAgent[agent]
+        let usage = selectedUsage?.byAgent[agent] ?? (selectedBucketStart == nil ? fullUsage : nil)
         let used = usage?.usage(of: agent)
+        let fullUsed = fullUsage?.usage(of: agent)
         let open = report.sessions.map(\.summary).filter { $0.agent == agent }
         let limits = report.limits(for: agent)
-        let hasTokens = used?.tokens != nil
+        let accounts = report.accounts.filter { $0.agent == agent }
+        let hasTokens = fullUsed?.tokens != nil
         let models = (usage?.byModel ?? []).prefix(Self.modelRows).map {
             ModelShareRowModel(name: $0.model.displayName, percent: format.percent($0.share))
         }
         return AgentUsageModel(
             agent: agent,
-            note: note(agent, used: used, limits: limits),
-            limits: limitBars(limits, period: period, agent: agent, now: report.now),
-            stats: hasTokens ? tokenStats(used, agent: agent, report: report) : activityStats(used, open: open, report: report),
-            chart: usage.flatMap { chart($0, period: period, tokens: hasTokens, now: report.now) },
+            note: note(
+                agent, used: fullUsed, limits: limits,
+                hasAccountUsage: accounts.contains { $0.snapshot != nil }
+            ),
+            limits: accounts.isEmpty
+                ? limitBars(limits, period: period, agent: agent, now: report.now)
+                : accounts.flatMap {
+                    limitBars(
+                        $0.limits, period: period, agent: agent, now: report.now,
+                        account: $0.name, snapshot: $0.snapshot
+                    )
+                },
+            stats: hasTokens
+                ? tokenStats(used, agent: agent, report: report, includesOpenSessions: selectedBucketStart == nil)
+                : activityStats(used, open: open, report: report, includesOpenSessions: selectedBucketStart == nil),
+            chart: fullUsage.flatMap {
+                chart($0, period: period, tokens: hasTokens, now: report.now, selectedBucketStart: selectedBucketStart)
+            },
             models: Array(models),
             whereRows: whereRows(usage?.byWork ?? [], limit: models.isEmpty ? Self.allWhereRows : Self.agentWhereRows)
         )
@@ -192,8 +276,11 @@ public struct UsagePanelPresenter: Sendable {
 
     /// What the agent does not share, said once at the top, so the missing numbers are not a
     /// surprise. Claude's limits are missing only until its status line saves them.
-    func note(_ agent: Agent, used: AgentPeriodUsage?, limits: AgentLimits) -> NoteModel? {
-        let hasLimits = !limits.standings.isEmpty
+    func note(
+        _ agent: Agent, used: AgentPeriodUsage?, limits: AgentLimits,
+        hasAccountUsage: Bool = false
+    ) -> NoteModel? {
+        let hasLimits = !limits.standings.isEmpty || hasAccountUsage
         let hasTokens = used?.tokens != nil
         let hasCost = used?.costUSD != nil || used?.credits != nil
         if agent == .claudeCode && !hasLimits && hasTokens {
@@ -213,7 +300,27 @@ public struct UsagePanelPresenter: Sendable {
     }
 
     /// Each limit as a bar: the shortest window first on Today, the week first otherwise.
-    func limitBars(_ limits: AgentLimits, period: UsagePeriod, agent: Agent, now: Date) -> [BarRowModel] {
+    func limitBars(
+        _ limits: AgentLimits, period: UsagePeriod, agent: Agent, now: Date,
+        account: String? = nil, snapshot: AccountUsageSnapshot? = nil
+    ) -> [BarRowModel] {
+        if limits.standings.isEmpty, let snapshot {
+            let values: [(String, Double?)] = period == .today
+                ? [("5-hour limit", snapshot.fiveHourPercent), ("Week limit", snapshot.weeklyPercent)]
+                : [("Week limit", snapshot.weeklyPercent), ("5-hour limit", snapshot.fiveHourPercent)]
+            return values.compactMap { title, percent in
+                guard let percent else { return nil }
+                return BarRowModel(
+                    title: "\(account ?? agent.displayName) · \(title) \(format.percentPoints(percent))",
+                    detail: now.timeIntervalSince(snapshot.readAt) > 15 * 60
+                        ? "Last read \(format.shortMoment(snapshot.readAt, now: now)) · may have reset"
+                        : "Reset time unavailable",
+                    fraction: percent / 100,
+                    highlightFraction: nil, isNearlyUsed: percent >= LimitStanding.warningPercent,
+                    note: nil
+                )
+            }
+        }
         let order: [LimitStanding.Kind] = period == .today
             ? [.fiveHour, .weekly, .monthly, .plan] : [.weekly, .monthly, .plan, .fiveHour]
         let standings = limits.standings.sorted {
@@ -224,7 +331,9 @@ public struct UsagePanelPresenter: Sendable {
                 "frees up \(format.moment(reset, now: now)) · in \(format.duration(reset.timeIntervalSince(now)))"
             } ?? ""
             return BarRowModel(
-                title: "\(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))",
+                title: account.map {
+                    "\($0) · \(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))"
+                } ?? "\(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))",
                 detail: detail,
                 fraction: standing.usedPercent / 100,
                 highlightFraction: nil,
@@ -249,8 +358,10 @@ public struct UsagePanelPresenter: Sendable {
     }
 
     /// Spent, Tokens, Time and Sessions, for an agent that reports tokens.
-    func tokenStats(_ used: AgentPeriodUsage?, agent: Agent, report: UsageReport) -> [StatModel] {
-        let time = workingTime(used, agent: agent, report: report)
+    func tokenStats(
+        _ used: AgentPeriodUsage?, agent: Agent, report: UsageReport, includesOpenSessions: Bool = true
+    ) -> [StatModel] {
+        let time = workingTime(used, agent: agent, report: report, includesOpenSessions: includesOpenSessions)
         return [
             spend(used).map { StatModel(label: used?.costUSD != nil ? "Spent" : "Credits", value: $0) },
             used?.tokens.map { StatModel(label: "Tokens", value: format.tokens($0)) },
@@ -261,12 +372,14 @@ public struct UsagePanelPresenter: Sendable {
 
     /// Time, Sessions, Prompts and Tool calls, for an agent that reports no tokens. An agent
     /// that records nothing per reply is measured by its open sessions.
-    func activityStats(_ used: AgentPeriodUsage?, open: [SessionSummary], report: UsageReport) -> [StatModel] {
+    func activityStats(
+        _ used: AgentPeriodUsage?, open: [SessionSummary], report: UsageReport, includesOpenSessions: Bool = true
+    ) -> [StatModel] {
         let recorded = (used?.turnCount ?? 0) > 0
-        let time = recorded ? used?.workingTime ?? 0 : open.reduce(0) { $0 + $1.activeDuration }
-        let sessions = recorded ? used?.sessionCount ?? 0 : open.count
-        let prompts = recorded ? used?.turnCount ?? 0 : open.reduce(0) { $0 + $1.turnCount }
-        let toolCalls = recorded ? used?.toolCalls : open.compactMap(\.activity?.toolCalls).reduce(0, +)
+        let time = recorded ? used?.workingTime ?? 0 : includesOpenSessions ? open.reduce(0) { $0 + $1.activeDuration } : 0
+        let sessions = recorded ? used?.sessionCount ?? 0 : includesOpenSessions ? open.count : 0
+        let prompts = recorded ? used?.turnCount ?? 0 : includesOpenSessions ? open.reduce(0) { $0 + $1.turnCount } : 0
+        let toolCalls = recorded ? used?.toolCalls : includesOpenSessions ? open.compactMap(\.activity?.toolCalls).reduce(0, +) : nil
         return [
             time >= 60 ? StatModel(label: "Time", value: format.duration(time)) : nil,
             sessions > 0 ? StatModel(label: "Sessions", value: "\(sessions)") : nil,
@@ -277,7 +390,13 @@ public struct UsagePanelPresenter: Sendable {
 
     /// Tokens, or hours for an agent with no tokens: a bar a day on Week, a week on Month.
     /// Today has no chart, and a chart with nothing in it is left out.
-    func chart(_ usage: PeriodUsage, period: UsagePeriod, tokens: Bool, now: Date) -> ChartModel? {
+    func chart(
+        _ usage: PeriodUsage,
+        period: UsagePeriod,
+        tokens: Bool,
+        now: Date,
+        selectedBucketStart: Date?
+    ) -> ChartModel? {
         guard period != .today, !usage.buckets.isEmpty else { return nil }
         let values = usage.buckets.map { tokens ? Double($0.tokens) : $0.workingTime }
         guard let top = values.max(), top > 0 else { return nil }
@@ -293,8 +412,12 @@ public struct UsagePanelPresenter: Sendable {
             default: "\(index == last ? "Now" : format.dayOfMonth(start)) · \(value(index))"
             }
             return ChartBarModel(
-                label: label, fraction: values[index] / top, isBusiest: index == busiest && index != last,
-                isCurrent: index == last
+                start: usage.buckets[index].start,
+                label: label,
+                fraction: values[index] / top,
+                isBusiest: index == busiest && index != last,
+                isCurrent: index == last,
+                isSelected: usage.buckets[index].start == selectedBucketStart
             )
         }
         let unit = tokens ? "TOKENS" : "HOURS"
@@ -311,8 +434,11 @@ public struct UsagePanelPresenter: Sendable {
 
     /// The period's working time, or for an agent that records nothing per reply, the time its
     /// open sessions have been active.
-    func workingTime(_ used: AgentPeriodUsage?, agent: Agent, report: UsageReport) -> TimeInterval {
+    func workingTime(
+        _ used: AgentPeriodUsage?, agent: Agent, report: UsageReport, includesOpenSessions: Bool = true
+    ) -> TimeInterval {
         if let used, used.workingTime > 0 { return used.workingTime }
+        guard includesOpenSessions else { return 0 }
         return report.sessions.map(\.summary).filter { $0.agent == agent }.reduce(0) { $0 + $1.activeDuration }
     }
 

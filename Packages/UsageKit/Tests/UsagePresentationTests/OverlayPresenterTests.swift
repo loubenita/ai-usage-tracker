@@ -56,12 +56,12 @@ struct OverlayPresenterTests {
         #expect(strip.items[1].accessibilityLabel.contains("Add retry to the image generation call"))
     }
 
-    @Test func theRestingStripListsTheSessionsThatWereBusyMostRecently() async throws {
+    @Test func theRestingStripRanksSpendAndContext() async throws {
         let strip = presenter.strip(try await Self.fakeReport(), hovered: nil, open: nil, acknowledged: [])
-        // The strip keeps the order the sessions started in; each item says how recent it is.
+        // The expanded strip keeps start order; the collapsed strip uses priority.
         #expect(strip.items.map(\.id) == ["s_vid", "s_img", "s_bug"])
-        // Bug fixes replied at 14:30, Image generation stopped at 14:28, Video at 13:20.
-        #expect(strip.items.map(\.recency) == [2, 1, 0])
+        #expect(strip.items.sorted { $0.priority < $1.priority }.map(\.id)
+            == ["s_bug", "s_vid", "s_img"])
     }
 
     @Test func hoverAndOpenHighlights() async throws {
@@ -133,8 +133,14 @@ struct OverlayPresenterTests {
     }
 
     /// A session detected in a terminal, with the given turns and no limits.
-    func detected(turns: [Turn], terminal: TerminalApp = .warp, snapshot: SessionSnapshot? = nil) -> UsageReport {
-        let origin = SessionOrigin(pid: 3857, tty: "ttys002", terminal: terminal, folder: "/Users/me/ai-usage-tracker")
+    func detected(
+        turns: [Turn], terminal: TerminalApp = .warp, snapshot: SessionSnapshot? = nil,
+        accountName: String? = nil
+    ) -> UsageReport {
+        let origin = SessionOrigin(
+            pid: 3857, tty: "ttys002", terminal: terminal,
+            folder: "/Users/me/ai-usage-tracker", accountName: accountName
+        )
         let tag = WorkTag(project: "ai-usage-tracker", concern: "main")
         let start = Date(timeIntervalSince1970: 1_790_000_000)
         var events = [SessionEvent(
@@ -151,6 +157,16 @@ struct OverlayPresenterTests {
         let records = UsageRecords(turns: turns, limits: [], sessionEvents: events, capturedAt: start)
         let settings = UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20)
         return GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 5400)
+    }
+
+    @Test func theSessionShowsItsAccountWhenKnown() throws {
+        let report = detected(turns: [], accountName: "Work")
+        let strip = presenter.strip(report, hovered: nil, open: nil, acknowledged: [])
+        #expect(strip.items.first?.account == "Work")
+        #expect(strip.items.first?.accessibilityLabel.contains("account Work") == true)
+        let panel = try #require(presenter.panel(report, sessionID: "claude-code-3857"))
+        #expect(panel.subtitle == "ai-usage-tracker · Work")
+        #expect(panel.details.first { $0.label == "Account" }?.value == "Work")
     }
 
     @Test func whatTheAgentDidNotReportIsLeftOutNotShownAsZero() throws {

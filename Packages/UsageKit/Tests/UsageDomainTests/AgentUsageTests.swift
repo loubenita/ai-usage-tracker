@@ -76,6 +76,23 @@ struct AgentLimitsTests {
         #expect(report.limits(for: .cursor).isEmpty)
     }
 
+    @Test func claudeAccountsKeepTheirOwnLimits() {
+        let windows = { (percent: Double, reset: Date) in
+            [LimitWindowReading(kind: .fiveHour, usedPercent: percent, resetsAt: reset)]
+        }
+        let readings = [
+            LimitReading(timestamp: start, agent: .claudeCode, plan: nil,
+                         windows: windows(20, start + 3600), accountID: "/profiles/work", accountName: "Work"),
+            LimitReading(timestamp: start + 20, agent: .claudeCode, plan: nil,
+                         windows: windows(80, start + 7200), accountID: "/profiles/personal", accountName: "Personal")
+        ]
+        let result = report(events: [], limits: readings)
+        #expect(result.accounts.count == 2)
+        #expect(result.accounts.first { $0.name == "Work" }?.limits.fiveHour?.usedPercent == 20)
+        #expect(result.accounts.first { $0.name == "Personal" }?.limits.fiveHour?.usedPercent == 80)
+        #expect(result.limits(for: .claudeCode).fiveHour?.usedPercent == 80)
+    }
+
     @Test func theStripShowsTheAgentWithTheMostOpenSessions() {
         let limits = [limit(.claudeCode, .fiveHour, 62), limit(.codex, .fiveHour, 20)]
         let codexHeavy = report(

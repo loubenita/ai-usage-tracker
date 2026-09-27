@@ -23,7 +23,7 @@ Launch options:
 | Option | What it does |
 |---|---|
 | no options | Shows your real sessions |
-| `--state rest\|hover\|drag\|open-session\|open-session-details\|open-today\|open-week\|open-month` | Opens straight into that state, so you can take screenshots without using the mouse. `open-session` opens a session's panel and `open-session-details` reveals its disclosure; `open-today`, `open-week` and `open-month` open the usage panel on that period; `drag` shows the full strip picked up so its handle stays under the pointer. Uses the made-up data unless `--data real` is also given |
+| `--state rest\|hover\|drag\|open-session\|open-session-details\|open-today\|open-week\|open-month` | Opens straight into that state, so you can take screenshots without using the mouse. `open-session` opens a session's panel and `open-session-details` reveals its disclosure; `open-today`, `open-week` and `open-month` open the usage panel on that period; `drag` shows the compact strip while it is being moved. Uses the made-up data unless `--data real` is also given |
 | `--session <id>` | With `--state open-session`, which session to open, such as `claude-code-35056` |
 | `--agent claude-code\|codex\|cursor\|kiro\|opencode` | With the `open-` states, shows that agent alone in the usage panel instead of all of them |
 | `--data real\|fake` | Picks real sessions or the made-up data |

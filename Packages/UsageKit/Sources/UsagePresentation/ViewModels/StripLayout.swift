@@ -1,7 +1,6 @@
 import CoreGraphics
 
-/// How many sessions the strip shows: at rest the few most recently busy, and never more
-/// than the screen has room for.
+/// At rest, show up to three sessions ranked by spend and context use, within screen height.
 public enum StripLayout {
     /// The expanded strip is a compact provider mark, task and context ring. Session and usage
     /// panels keep the wider reading column beside it.
@@ -10,14 +9,12 @@ public enum StripLayout {
     /// Expanded strip + gap + panel + room for the soft glass shadow.
     public static let overlayWidth: CGFloat = expandedWidth + 8 + panelWidth + 32
 
-    /// The resting strip lists this many sessions, the most recently busy first, and counts
-    /// the rest in a "+N" item.
-    public static let restLimit = 5
+    /// The resting strip shows up to this many sessions and counts the rest in "+N".
+    public static let restLimit = 3
 
-    /// Half strip: 12pt padding at the top and bottom, a visible drag handle and its gap, then
+    /// Half strip: 12pt padding at the top and bottom, then
     /// a 51pt item (36pt half ring, 3pt gap, 12pt time) every 63pt.
     static let restPadding: CGFloat = 12 * 2
-    static let restHandle: CGFloat = handleBand + 12
     static let restItemPitch: CGFloat = 51 + 12
     static let restItemHeight: CGFloat = 51
     /// The "+N" band across the foot of the strip, and the gap above it.
@@ -29,7 +26,7 @@ public enum StripLayout {
     /// "+N" chip is a small chip rather than an item, so it takes no session's place; it does
     /// take its own room, so `showingChip` leaves it.
     public static func restCapacity(height: CGFloat, showingChip: Bool = false) -> Int {
-        let forItems = height - restPadding - restHandle - (showingChip ? restChip : 0)
+        let forItems = height - restPadding - (showingChip ? restChip : 0)
         guard forItems >= restItemHeight else { return 1 }
         return min(Int((forItems - restItemHeight) / restItemPitch) + 1, restLimit)
     }
@@ -45,7 +42,7 @@ public enum StripLayout {
     /// The pointer moves this far with the button down before the strip is picked up. Until
     /// then nothing changes, so a click on the handle leaves the strip as it was.
     public static let dragThreshold: CGFloat = 4
-    /// The visible handle's band at the top of the strip.
+    /// The handle band at the top of the expanded strip.
     public static let handleBand: CGFloat = 28
     /// A full-width hit target at the screen edge with the visible capsule inset on both sides.
     public static let handleHitWidth: CGFloat = 30

@@ -25,7 +25,7 @@ public struct SessionSummary: Sendable, Hashable, Identifiable {
     /// When the session entered its current state, when the agent says: how long it has waited.
     public let stateSince: Date?
     /// When the session's own files last changed: its latest reply, or the last time the agent
-    /// said anything about it. The strip lists the most recently busy sessions first.
+    /// said anything about it. This breaks ties in strip priority.
     public let lastActivityAt: Date
     /// The sub-agents it started; their tokens and cost are in the session's.
     public let subagents: [SubagentRun]

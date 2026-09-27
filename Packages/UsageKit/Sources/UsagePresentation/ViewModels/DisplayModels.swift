@@ -25,13 +25,13 @@ public struct StripItemModel: Sendable, Equatable, Identifiable {
     /// colour beside it, with the provider name in the accessibility label.
     public let title: String
     public let time: String
+    public let account: String?
     public let needsUser: Bool
     /// The amber dot pulses until the item has been hovered once.
     public let pulses: Bool
     public let highlight: ItemHighlight
-    /// 0 for the session whose work changed most recently. At rest the strip lists the first
-    /// few in this order; the full strip keeps the order the sessions started in.
-    public let recency: Int
+    /// Rank by combined spend and context use; 0 is highest priority.
+    public let priority: Int
     public let accessibilityLabel: String
 }
 
@@ -194,12 +194,16 @@ public struct ModelShareRowModel: Sendable, Equatable, Identifiable {
 
 public struct ChartBarModel: Sendable, Equatable, Identifiable {
     public var id: String { label }
+    /// The day or week this bar represents; this is the selection identity, not its display text.
+    public let start: Date
     public let label: String
     public let fraction: Double
     /// The busiest bar is drawn in the agent's colour.
     public let isBusiest: Bool
     /// Today, or this week: drawn in white.
     public let isCurrent: Bool
+    /// The bar whose totals the rest of the panel shows.
+    public let isSelected: Bool
 }
 
 public struct ChartModel: Sendable, Equatable {
@@ -256,6 +260,8 @@ public struct UsagePanelModel: Sendable, Equatable {
     public let picker: [PickerItemModel]
     public let selected: AgentFilter
     public let period: UsagePeriod
+    /// Nil for Today; Week defaults to today and Month to the current week.
+    public let selectedBucketStart: Date?
     /// "Refreshes in 8:12", or "Refreshing…"; nil before the first countdown starts.
     public let refreshLabel: String?
     public let content: UsageContent

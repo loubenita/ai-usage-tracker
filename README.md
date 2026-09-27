@@ -31,12 +31,12 @@ To quit the app, right-click the strip or a panel and choose **Quit**.
 
 ### The strip
 
-At rest it is a half strip on the screen's edge, listing the five sessions whose work changed most recently with a "+N" band for the rest. Move the pointer over it and it grows into a compact list. Each row has a distinct provider mark, a short task name, active time and the context ring. Full facts stay in the selected session's panel.
+At rest it is a half strip on the screen's edge, listing up to three sessions ranked by spend and context use with a "+N" band for the rest. Move the pointer over it and it grows into a compact list. Each row has a distinct provider mark, a short task name, active time and the context ring. Full facts stay in the selected session's panel.
 
 - Each ring fills as that session's context fills, turns red when it is nearly full, and carries its agent's colour.
 - Inside the ring is the current context in use: the number and the fill describe the same reading. Cumulative session tokens stay in the session panel.
 - An amber dot means the session is waiting for your reply.
-- Drag the visible bar at the top to move the list up or down the edge. It stays where you drop it; dragging or scrolling the session rows does not move the overlay.
+- Expand the strip to reveal its drag bar, then drag it up or down the edge. It becomes compact while moving. It stays where you drop it; dragging or scrolling the session rows does not move the overlay.
 
 ### A session
 
@@ -44,7 +44,7 @@ Click a ring.
 
 <img src="docs/images/session.png" alt="A selected session panel with status, total spend and tokens, context, and a Show details control" width="330">
 
-It shows only the selected session: what it is doing and where it runs, total spend and tokens, active time and turns, and context with when it will be full at this pace. **Show details** reveals readable token categories, pace, model, branch and first ask. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. The panel also lists every sub-agent run separately with its tokens, cost and time, plus a combined total and an explicit reminder that those runs are already included in the session totals.
+It shows only the selected session, including its account when the agent exposes one: what it is doing and where it runs, total spend and tokens, active time and turns, and context with when it will be full at this pace. **Show details** reveals readable token categories, pace, model, branch and first ask. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. The panel also lists every sub-agent run separately with its tokens, cost and time, plus a combined total and an explicit reminder that those runs are already included in the session totals.
 
 [See the expanded details with all six sub-agent runs and the session facts.](docs/images/session-details.png)
 
@@ -69,6 +69,8 @@ Claude Code keeps its plan limits out of its transcripts, but hands them to the 
 ```json
 "statusLine": { "type": "command", "command": "/path/to/ai-usage-tracker/scripts/claude-statusline.sh" }
 ```
+
+For multiple Claude accounts, set this status line in each account's `settings.json` under its `CLAUDE_CONFIG_DIR`. The tracker reads each profile's sessions separately and shows each account's limits separately. Set `AIUT_ACCOUNT_NAME` for a readable account label if the directory name is unclear. If the existing `account-usage.py` status line is installed, the tracker also reads its per-account percentage cache; it shows those percentages without inventing reset times.
 
 Until then Claude's row says "no data". No login, token or Keychain item is involved anywhere in the app. If you already have a status line, set `AIUT_STATUSLINE_NEXT` to its command and the script prints that instead of its own.
 

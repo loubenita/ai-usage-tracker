@@ -17,6 +17,15 @@ input=$(cat)
 log_dir="$HOME/Library/Application Support/AIUsageTracker"
 log="$log_dir/claude-limits.jsonl"
 
+config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+config_dir="$(cd "$config_dir" 2>/dev/null && pwd -P)" || config_dir="$HOME/.claude"
+account_name="${AIUT_ACCOUNT_NAME:-}"
+if [ -z "$account_name" ]; then
+  account_name="${config_dir##*/}"
+  [ "$account_name" = .claude ] && account_name=Default
+  account_name="${account_name#.claude-}"
+fi
+
 limits=$(printf '%s' "$input" | jq -c '
   (.rate_limits // {}) as $r
   | {five_hour: $r.five_hour, seven_day: $r.seven_day}
@@ -25,9 +34,11 @@ limits=$(printf '%s' "$input" | jq -c '
 
 if [ -n "$limits" ]; then
   mkdir -p "$log_dir"
-  last=$(tail -n 1 "$log" 2>/dev/null | jq -c 'del(.at)' 2>/dev/null)
-  if [ "$limits" != "$last" ]; then
-    printf '%s' "$limits" | jq -c --argjson at "$(date +%s)" '{at: $at} + .' >> "$log"
+  latest=$(tail -n 1 "$log" 2>/dev/null)
+  current=$(printf '%s' "$limits" | jq -c --arg id "$config_dir" --arg name "$account_name"     '{account_id: $id, account_name: $name} + .')
+  last=$(printf '%s' "$latest" | jq -c 'del(.at)' 2>/dev/null)
+  if [ "$current" != "$last" ]; then
+    printf '%s' "$current" | jq -c --argjson at "$(date +%s)" '{at: $at} + .' >> "$log"
   fi
 fi
 

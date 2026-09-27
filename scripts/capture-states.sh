@@ -88,6 +88,6 @@ else
   capture open-today 4-open-today.build
   capture open-week 5-open-week-claude.build --agent claude-code
   capture open-month 6-open-month-cursor.build --agent cursor
-  # Frame 7: the strip picked up, showing its handle where it was dragged to.
+  # Frame 7: the compact strip shifted to its drag position.
   capture drag 7-drag.build
 fi

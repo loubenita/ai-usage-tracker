@@ -74,6 +74,35 @@ struct OverlayViewModelTests {
         #expect(!viewModel.isOpen)
     }
 
+    @Test func usageDefaultsToTheCurrentBucketAndResetsWhenThePeriodChanges() async throws {
+        let viewModel = await makeViewModel()
+        viewModel.openUsage()
+        viewModel.usagePeriod = .week
+        let week = try #require(viewModel.overview)
+        let today = try #require(viewModel.report?.periods[.week]?.buckets.last?.start)
+        #expect(week.selectedBucketStart == today)
+
+        let earlierDay = try #require(viewModel.report?.periods[.week]?.buckets.first?.start)
+        viewModel.selectUsageBucket(earlierDay)
+        #expect(viewModel.selectedUsageBucketStart == earlierDay)
+        #expect(viewModel.overview?.selectedBucketStart == earlierDay)
+
+        viewModel.usagePeriod = .month
+        // The previous day's selection cannot leak into Month: it defaults to this week.
+        #expect(viewModel.selectedUsageBucketStart == nil)
+        #expect(viewModel.overview?.selectedBucketStart == viewModel.report?.periods[.month]?.buckets.last?.start)
+    }
+
+    @Test func aBucketSelectionSurvivesAReportRefresh() async throws {
+        let viewModel = await makeViewModel()
+        viewModel.openUsage()
+        viewModel.usagePeriod = .week
+        let selected = try #require(viewModel.report?.periods[.week]?.buckets.first?.start)
+        viewModel.selectUsageBucket(selected)
+        viewModel.refresh()
+        #expect(viewModel.overview?.selectedBucketStart == selected)
+    }
+
     @Test func sessionsThatStartAndEndAppearAndDisappearOnReload() async {
         let repository = ChangingRepository()
         let viewModel = OverlayViewModel(
@@ -106,8 +135,8 @@ struct OverlayViewModelTests {
 
         viewModel.pointerOverStrip(true)
         viewModel.beginStripDrag()
-        // It keeps its size while it is dragged, so the handle stays under the pointer.
-        #expect(viewModel.strip?.isExpanded == true)
+        // Dragging collapses the whole strip.
+        #expect(viewModel.strip?.isExpanded == false)
         viewModel.dragStrip(to: 100, limit: 300)
         #expect(viewModel.stripOffset == 100)
         // It cannot be dragged off the screen.
