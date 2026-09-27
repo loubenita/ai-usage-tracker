@@ -108,15 +108,15 @@ public struct UsagePanelPresenter: Sendable {
             spend: costs.isEmpty ? nil : format.usd(costs.reduce(0, +))
         ) : nil
         return AllAgentsModel(
-            headline: headline(report.limitsByAgent, now: report.now),
+            headline: headline(report.limitsByAgent, now: report.now, period: period),
             limits: agents.flatMap { agent in
                 let accounts = report.accounts.filter { $0.agent == agent }
                 return accounts.isEmpty
-                    ? limitRows(agent, limits: report.limits(for: agent), now: report.now)
+                    ? limitRows(agent, limits: report.limits(for: agent), period: period, now: report.now)
                     : accounts.flatMap {
                         limitRows(
-                            agent, limits: $0.limits, now: report.now,
-                            account: $0.name, accountID: $0.id, snapshot: $0.snapshot
+                            agent, limits: $0.limits, period: period, now: report.now,
+                            account: $0.name, accountID: $0.id, snapshot: currentSnapshot($0.snapshot, now: report.now)
                         )
                     }
             },
@@ -137,8 +137,9 @@ public struct UsagePanelPresenter: Sendable {
 
     /// "Codex runs out first: 5% of its week is left until Thu 06:57. Claude's 5-hour limit
     /// frees up at 16:40."
-    func headline(_ limits: [Agent: AgentLimits], now: Date) -> String? {
-        guard let headline = OverviewSummary.headline(limits: limits) else { return nil }
+    func headline(_ limits: [Agent: AgentLimits], now: Date, period: UsagePeriod = .week) -> String? {
+        let scoped = limits.mapValues { visibleLimits($0, period: period) }
+        guard let headline = OverviewSummary.headline(limits: scoped) else { return nil }
         let standing = headline.standing
         let name = headline.agent.displayName
         let window = Self.windowNoun(standing.kind)
@@ -181,31 +182,32 @@ public struct UsagePanelPresenter: Sendable {
 
     /// Each limit the agent shares, or one "no data" row.
     func limitRows(
-        _ agent: Agent, limits: AgentLimits, now: Date,
+        _ agent: Agent, limits: AgentLimits, period: UsagePeriod, now: Date,
         account: String? = nil, accountID: String? = nil,
         snapshot: AccountUsageSnapshot? = nil
     ) -> [LimitListRowModel] {
-        let standings = limits.standings
+        let allStandings = limits.standings
+        let standings = visibleStandings(allStandings, period: period)
         let label = [agent.displayName, account].compactMap { $0 }.joined(separator: " · ")
         if standings.isEmpty, let snapshot {
-            return [
-                ("5-hour", snapshot.fiveHourPercent), ("week", snapshot.weeklyPercent)
-            ].compactMap { window, percent in
+            return snapshotValues(snapshot, period: period).compactMap { window, percent in
                 guard let percent else { return nil }
                 return LimitListRowModel(
                     id: "\(agent.rawValue)-\(accountID ?? "default")-\(window)",
                     agent: agent, name: "\(label) \(window)", fraction: percent / 100,
                     used: format.percentPoints(percent),
-                    freesUp: now.timeIntervalSince(snapshot.readAt) > 15 * 60
-                        ? "Last read \(format.shortMoment(snapshot.readAt, now: now))" : "",
+                    freesUp: "Reset time unavailable",
                     isNearlyUsed: percent >= LimitStanding.warningPercent
                 )
             }
         }
+        // This agent only shares a window outside the selected period. Do not turn that into a
+        // misleading "no data" row on Today.
+        guard allStandings.isEmpty || !standings.isEmpty else { return [] }
         guard !standings.isEmpty else {
             return [LimitListRowModel(
                 id: "\(agent.rawValue)-\(accountID ?? "none")-none", agent: agent, name: label, fraction: nil, used: "",
-                freesUp: "no data", isNearlyUsed: false
+                freesUp: snapshot == nil && account != nil ? "no current data" : "no data", isNearlyUsed: false
             )]
         }
         return standings.map { standing in
@@ -260,7 +262,7 @@ public struct UsagePanelPresenter: Sendable {
                 : accounts.flatMap {
                     limitBars(
                         $0.limits, period: period, agent: agent, now: report.now,
-                        account: $0.name, snapshot: $0.snapshot
+                        account: $0.name, snapshot: currentSnapshot($0.snapshot, now: report.now)
                     )
                 },
             stats: hasTokens
@@ -305,16 +307,14 @@ public struct UsagePanelPresenter: Sendable {
         account: String? = nil, snapshot: AccountUsageSnapshot? = nil
     ) -> [BarRowModel] {
         if limits.standings.isEmpty, let snapshot {
-            let values: [(String, Double?)] = period == .today
-                ? [("5-hour limit", snapshot.fiveHourPercent), ("Week limit", snapshot.weeklyPercent)]
-                : [("Week limit", snapshot.weeklyPercent), ("5-hour limit", snapshot.fiveHourPercent)]
+            let values = snapshotValues(snapshot, period: period).map { window, percent in
+                (window == "5-hour" ? "5-hour limit" : "Week limit", percent)
+            }
             return values.compactMap { title, percent in
                 guard let percent else { return nil }
                 return BarRowModel(
                     title: "\(account ?? agent.displayName) · \(title) \(format.percentPoints(percent))",
-                    detail: now.timeIntervalSince(snapshot.readAt) > 15 * 60
-                        ? "Last read \(format.shortMoment(snapshot.readAt, now: now)) · may have reset"
-                        : "Reset time unavailable",
+                    detail: "Reset time unavailable",
                     fraction: percent / 100,
                     highlightFraction: nil, isNearlyUsed: percent >= LimitStanding.warningPercent,
                     note: nil
@@ -323,7 +323,7 @@ public struct UsagePanelPresenter: Sendable {
         }
         let order: [LimitStanding.Kind] = period == .today
             ? [.fiveHour, .weekly, .monthly, .plan] : [.weekly, .monthly, .plan, .fiveHour]
-        let standings = limits.standings.sorted {
+        let standings = visibleStandings(limits.standings, period: period).sorted {
             (order.firstIndex(of: $0.kind) ?? 0) < (order.firstIndex(of: $1.kind) ?? 0)
         }
         return standings.enumerated().map { index, standing in
@@ -341,6 +341,37 @@ public struct UsagePanelPresenter: Sendable {
                 note: index == 0 ? pace(standing, now: now) : nil
             )
         }
+    }
+
+    /// The account-usage cache only contains percentages. It has neither a reset timestamp nor
+    /// a way to say which window those percentages still belong to, so after fifteen minutes it
+    /// cannot safely describe a live limit. A status-line reading with a future `resetsAt` wins
+    /// over this cache through `limits` above and remains visible for its own account.
+    func currentSnapshot(_ snapshot: AccountUsageSnapshot?, now: Date) -> AccountUsageSnapshot? {
+        guard let snapshot, now.timeIntervalSince(snapshot.readAt) <= 15 * 60 else { return nil }
+        return snapshot
+    }
+
+    func snapshotValues(_ snapshot: AccountUsageSnapshot, period: UsagePeriod) -> [(String, Double?)] {
+        switch period {
+        case .today:
+            [("5-hour", snapshot.fiveHourPercent)]
+        case .week, .month:
+            [("week", snapshot.weeklyPercent), ("5-hour", snapshot.fiveHourPercent)]
+        }
+    }
+
+    func visibleStandings(_ standings: [LimitStanding], period: UsagePeriod) -> [LimitStanding] {
+        period == .today ? standings.filter { $0.kind != .weekly } : standings
+    }
+
+    func visibleLimits(_ limits: AgentLimits, period: UsagePeriod) -> AgentLimits {
+        guard period == .today else { return limits }
+        return AgentLimits(
+            fiveHour: limits.fiveHour, weekly: nil, monthly: limits.monthly,
+            creditsUsedThisMonth: limits.creditsUsedThisMonth, weeklyUsedToday: nil, weeklyUsedByDay: nil,
+            plan: limits.plan, creditsUsedToday: limits.creditsUsedToday, creditsPerDayLeft: limits.creditsPerDayLeft
+        )
     }
 
     /// "On pace to end the week at about 90%.", or when it runs out first.
