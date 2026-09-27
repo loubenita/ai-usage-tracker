@@ -49,7 +49,7 @@ Sources: `UsageData/Claude/ClaudeTranscript.swift`, `ClaudeAccounts.swift`, `Cla
 | Identity/location | Session ID, person-chosen name, folder/project/branch, TTY/terminal, friendly profile name | Implemented and observed | Generated names are discarded. Profile directory is private internal identity. |
 | Model/time | Model, reply time, process time, active/idle time and working time | Implemented and observed | Working time sums reply gaps up to five minutes. |
 | Tokens | Input, output, cache read/write, per reply and total | Implemented and observed | Repeated transcript parts are deduplicated by message ID. Missing is not zero. |
-| Context/cost | Latest used/window and USD estimate per reply/total | Implemented and observed | Both depend on the known-model price table. Cost is list price, not an invoice. |
+| Context/cost | Latest used/window and USD estimate per reply/total | Implemented and observed | Context comes from latest usage plus its reported/known window. Only cost depends on the known-model price table; it is list price, not an invoice. |
 | Task/activity | First ask, tool calls, changed files and task label | Implemented and observed | First ask is capped at 200 characters. Task label is local naming, not provider data. |
 | State | Working, waiting/idle and state-since | Implemented and observed | A finished turn does not prove who must act next. |
 | Sub-agents | Run ID, model, tokens, priced cost, working time and parent roll-up | Implemented and observed | Already included in parent totals; excluded from usual pace. |
@@ -60,7 +60,7 @@ Sources: `UsageData/Claude/ClaudeTranscript.swift`, `ClaudeAccounts.swift`, `Cla
 
 `ClaudeAccounts.swift` finds `.claude` and `.claude-*` profiles. Sessions carry a friendly profile name plus local directory ID. `ClaudeLimitsLog.swift` attaches limits to that profile. `GenerateUsageReport.swift` keeps each account separate in Usage and uses the matching account's five-hour reading for a live session.
 
-`ClaudeAccountCache.swift` can use `account-*.json`. It supplies only 5-hour/week percentages, profile ID and read time, and is accepted for seven days. It has **no reset time**: show its read time or stale state, never a made-up reset.
+`ClaudeAccountCache.swift` accepts `account-*.json` snapshots for up to seven days. It supplies only 5-hour/week percentages, profile ID and read time. `UsagePanelPresenter` suppresses a snapshot once it is older than 15 minutes, so the seven-day rule is source acceptance rather than UI freshness. It has **no reset time**: never make one up.
 
 ## Codex
 
@@ -133,7 +133,7 @@ Multiple-account attribution is currently **Claude-only**. Codex gives a plan ty
 
 ### Expanded rail
 
-Show the four highest-cost sessions when USD cost exists. Otherwise rank known context fraction, then recent activity. This is display policy, not provider data. Each row needs only provider mark and task, project plus branch when known, state plus active time, and context used/fraction when known. Keep model, cumulative tokens, first ask, tool/file counts, account and breakdowns out. `+N` counts every hidden live session, even an untracked provider. Use equal horizontal and vertical row inset so the selected first row reaches the top edge cleanly.
+The compact rail shows the top four sessions by USD cost when known, then context fraction and recent activity, followed by `+N` for every hidden live session. This is display policy, not provider data. The expanded rail allows every live session, so it has no top-four cap. Each expanded row needs only provider mark and task, project plus branch when known, state plus active time, and context used/fraction when known. Keep model, cumulative tokens, first ask, tool/file counts, account and breakdowns out. Use equal horizontal and vertical row inset so the selected first row reaches the top edge cleanly.
 
 ### Detail panel
 
