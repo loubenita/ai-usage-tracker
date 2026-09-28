@@ -132,7 +132,7 @@ struct OverlayViewModelTests {
         #expect(await waitsForCollapse(of: viewModel))
     }
 
-    @Test func anyCompactPointerMovementRestartsTheDwell() async {
+    @Test func movingOverTheRailDoesNotRestartTheDwell() async {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/London")!
         let repository = FakeUsageRepository(calendar: calendar)
@@ -147,10 +147,34 @@ struct OverlayViewModelTests {
 
         viewModel.pointerMovedOverStrip(at: .zero)
         #expect(await waitsForSleeps(1, from: sleeper))
-        // Even a subpoint change means the cursor moved and starts a new full dwell.
+        // A hand resting on the rail still moves it a little; the wait runs from arrival.
         viewModel.pointerMovedOverStrip(at: CGPoint(x: 0.5, y: 0))
-        #expect(await waitsForSleeps(2, from: sleeper))
+        viewModel.pointerMovedOverStrip(at: CGPoint(x: 6, y: 20))
+        for _ in 0..<20 { await Task.yield() }
+        #expect(await sleeper.calls == 1)
         #expect(viewModel.strip?.isExpanded == false)
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
+    }
+
+    @Test func leavingBeforeTheDwellEndsStartsItAgainOnReturn() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let repository = FakeUsageRepository(calendar: calendar)
+        let sleeper = HoverDwellSleeper()
+        let viewModel = OverlayViewModel(
+            repository: repository,
+            timeSource: FixedTime(now: repository.anchor),
+            calendar: calendar,
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) }
+        )
+        await viewModel.load()
+
+        viewModel.pointerMovedOverStrip(at: .zero)
+        #expect(await waitsForSleeps(1, from: sleeper))
+        viewModel.pointerLeftStrip()
+        viewModel.pointerMovedOverStrip(at: CGPoint(x: 3, y: 3))
+        #expect(await waitsForSleeps(2, from: sleeper))
         await sleeper.releaseAll()
         #expect(await waitsForExpansion(of: viewModel))
     }

@@ -65,7 +65,6 @@ public final class OverlayViewModel {
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var totalsTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverTask: Task<Void, Never>?
-    @ObservationIgnored private var stripHoverOrigin: CGPoint?
     @ObservationIgnored private var stripLeaveTask: Task<Void, Never>?
     /// How many times the totals were built: the tests count them.
     @ObservationIgnored private(set) var totalsBuilds = 0
@@ -228,12 +227,12 @@ public final class OverlayViewModel {
         stripHoverTask = nil
         stripLeaveTask?.cancel()
         stripLeaveTask = nil
-        stripHoverOrigin = nil
         isPointerOverStrip = inside
     }
 
-    /// Compact content opens only after one continuous second with the pointer still.
-    /// Every coordinate change starts a fresh dwell; the handle never calls this intent.
+    /// Compact content opens one second after the pointer arrives on it. A hand resting on the
+    /// rail still moves it slightly, so movement does not restart the wait; leaving does.
+    /// The handle never calls this intent. `location` is where the pointer is on the rail.
     public func pointerMovedOverStrip(at location: CGPoint = .zero) {
         guard !isDraggingStrip else { return }
         guard !isPointerOverStrip else {
@@ -242,15 +241,12 @@ public final class OverlayViewModel {
             stripLeaveTask = nil
             return
         }
-        if stripHoverOrigin == location { return }
-        stripHoverTask?.cancel()
-        stripHoverOrigin = location
+        guard stripHoverTask == nil else { return }
         let delay = stripHoverDelay
         stripHoverTask = Task { [weak self] in
             guard await self?.stripHoverSleeper(delay) == true, !Task.isCancelled else { return }
             self?.isPointerOverStrip = true
             self?.stripHoverTask = nil
-            self?.stripHoverOrigin = nil
         }
     }
 
@@ -269,7 +265,6 @@ public final class OverlayViewModel {
     public func pointerLeftStrip() {
         stripHoverTask?.cancel()
         stripHoverTask = nil
-        stripHoverOrigin = nil
         guard isPointerOverStrip, stripLeaveTask == nil else { return }
         let grace = stripLeaveGrace
         stripLeaveTask = Task { [weak self] in
