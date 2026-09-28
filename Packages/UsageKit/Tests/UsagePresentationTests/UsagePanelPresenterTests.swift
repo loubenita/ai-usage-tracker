@@ -81,6 +81,43 @@ struct UsagePanelPresenterTests {
         #expect(codex.stats.first { $0.label == "Tokens" }?.value == "410k")
     }
 
+    @Test func eachPeriodShowsOnlyItsOwnLimit() async throws {
+        let report = try await OverlayPresenterTests.fakeReport()
+
+        #expect(try all(report, .today).limits.map(\.name) == ["Claude 5-hour"])
+        // Week: the weekly limit only, never the 5-hour window.
+        #expect(try all(report, .week).limits.map(\.name) == ["Claude week", "Codex week"])
+        #expect(try agent(report, .claudeCode, .week).limits.map(\.title) == ["Week limit 48%"])
+        // Month: neither rolling limit; the month's spend and tokens remain.
+        let month = try agent(report, .claudeCode, .month)
+        #expect(month.limits.isEmpty)
+        #expect(try all(report, .month).limits.isEmpty)
+        #expect(month.stats.map(\.label).contains("Spent"))
+        #expect(month.stats.map(\.label).contains("Tokens"))
+    }
+
+    @Test func monthSaysNothingAboutAnAccountWithoutAReading() {
+        let presenter = UsagePanelPresenter(formatter: UsageFormatter(calendar: .current))
+        let none = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil)
+        let row = { (period: UsagePeriod) in
+            presenter.limitRows(.claudeCode, limits: none, period: period, now: .now, account: "Default")
+        }
+        #expect(row(.today).map(\.freesUp) == ["No recent limit reading"])
+        #expect(row(.week).map(\.freesUp) == ["No recent limit reading"])
+        #expect(row(.month).isEmpty)
+    }
+
+    @Test func accountPercentagesFollowThePeriodToo() {
+        let snapshot = AccountUsageSnapshot(
+            id: "/Users/me/.claude", name: "Default", agent: .claudeCode, readAt: .now,
+            fiveHourPercent: 11, weeklyPercent: 18
+        )
+        let presenter = UsagePanelPresenter(formatter: UsageFormatter(calendar: .current))
+        #expect(presenter.snapshotValues(snapshot, period: .today).map(\.0) == ["5-hour"])
+        #expect(presenter.snapshotValues(snapshot, period: .week).map(\.0) == ["week"])
+        #expect(presenter.snapshotValues(snapshot, period: .month).isEmpty)
+    }
+
     @Test func todayExcludesWeeklyLimitsWhileWeekIncludesThem() async throws {
         let report = try await OverlayPresenterTests.fakeReport()
 
@@ -91,8 +128,8 @@ struct UsagePanelPresenterTests {
         #expect(try agent(report, .codex, .today).limits.isEmpty)
 
         let week = try all(report, .week)
-        #expect(week.limits.map(\.name) == ["Claude 5-hour", "Claude week", "Codex week"])
-        #expect(try agent(report, .claudeCode, .week).limits.map(\.title) == ["Week limit 48%", "5-hour limit 62%"])
+        #expect(week.limits.map(\.name) == ["Claude week", "Codex week"])
+        #expect(try agent(report, .claudeCode, .week).limits.map(\.title) == ["Week limit 48%"])
     }
 
     @Test func twoClaudeAccountsShowOnlyCurrentPercentagesAndTruthfulResetAvailability() throws {
@@ -212,7 +249,7 @@ struct UsagePanelPresenterTests {
             projectedLeftAtReset: nil, calendarDaysLeft: 0
         )
         let headline = presenter.headline(
-            [.codex: AgentLimits(fiveHour: full, weekly: nil, monthly: nil)], now: now
+            [.codex: AgentLimits(fiveHour: full, weekly: nil, monthly: nil)], now: now, period: .today
         )
         #expect(headline == "Codex has run out of its 5-hour window until 16:13.")
         #expect(presenter.headline([:], now: now) == nil)
@@ -223,9 +260,9 @@ struct UsagePanelPresenterTests {
     @Test func claudesWeekMatchesFrame5() async throws {
         let model = try agent(try await OverlayPresenterTests.fakeReport(), .claudeCode, .week)
         #expect(model.note == nil)
-        // The week first on Week, then the 5-hour window, each with when it frees up.
-        #expect(model.limits.map(\.title) == ["Week limit 48%", "5-hour limit 62%"])
-        #expect(model.limits.map(\.detail) == ["Resets Thu 09:00 · in 2d 18h", "Resets 16:40 · in 2h 08m"])
+        // Week shows the weekly limit only, with when it frees up.
+        #expect(model.limits.map(\.title) == ["Week limit 48%"])
+        #expect(model.limits.map(\.detail) == ["Resets Thu 09:00 · in 2d 18h"])
         #expect(model.limits.first?.note == "On pace to end the week at about 90%.")
         let chart = try #require(model.chart)
         #expect(chart.title == "TOKENS PER DAY")
