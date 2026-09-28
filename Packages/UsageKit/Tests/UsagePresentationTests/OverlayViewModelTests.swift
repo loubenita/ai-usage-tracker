@@ -64,11 +64,46 @@ struct OverlayViewModelTests {
 
         viewModel.pointerMovedOverStrip()
         viewModel.pointerLeftStrip()
-        #expect(viewModel.strip?.isExpanded == false)
+        #expect(await waitsForSleeps(2, from: sleeper))
+        await sleeper.releaseAll()
+        #expect(await waitsForCollapse(of: viewModel))
     }
 
     @Test func compactRailUsesAThreeSecondDwellByDefault() {
         #expect(OverlayViewModel.defaultStripHoverDelay == .seconds(3))
+    }
+
+    @Test func theLeaveGraceOutlastsTheRailTransition() {
+        #expect(OverlayViewModel.defaultStripLeaveGrace > .milliseconds(Int(StripLayout.railTransitionDuration * 1000)))
+    }
+
+    /// Growing the rail under a still pointer makes the view report an exit and then the pointer
+    /// again. That false exit must not close the rail it just opened.
+    @Test func anExitFollowedByThePointerDuringTheGrowKeepsTheRailOpen() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let repository = FakeUsageRepository(calendar: calendar)
+        let sleeper = HoverDwellSleeper()
+        let viewModel = OverlayViewModel(
+            repository: repository,
+            timeSource: FixedTime(now: repository.anchor),
+            calendar: calendar,
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) }
+        )
+        await viewModel.load()
+
+        viewModel.pointerMovedOverStrip(at: .zero)
+        #expect(await waitsForSleeps(1, from: sleeper))
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
+
+        viewModel.pointerLeftStrip()
+        #expect(await waitsForSleeps(2, from: sleeper))
+        #expect(viewModel.strip?.isExpanded == true)
+        viewModel.pointerMovedOverStrip(at: CGPoint(x: 42, y: 80))
+        await sleeper.releaseAll()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(viewModel.strip?.isExpanded == true)
     }
 
     @Test func aTrueExitImmediatelyAfterExpansionClosesTheRail() async {
@@ -89,9 +124,12 @@ struct OverlayViewModelTests {
         await sleeper.releaseAll()
         #expect(await waitsForExpansion(of: viewModel))
 
-        // The view owns a stable tracking region, so the model treats every exit as genuine.
+        // An exit nothing contradicts closes the rail once the grace has passed.
         viewModel.pointerLeftStrip()
-        #expect(viewModel.strip?.isExpanded == false)
+        #expect(await waitsForSleeps(2, from: sleeper))
+        #expect(viewModel.strip?.isExpanded == true)
+        await sleeper.releaseAll()
+        #expect(await waitsForCollapse(of: viewModel))
     }
 
     @Test func anyCompactPointerMovementRestartsTheDwell() async {
@@ -289,6 +327,14 @@ struct OverlayViewModelTests {
     private func waitsForSleeps(_ expected: Int, from sleeper: HoverDwellSleeper) async -> Bool {
         for _ in 0..<200 {
             if await sleeper.calls >= expected { return true }
+            await Task.yield()
+        }
+        return false
+    }
+
+    private func waitsForCollapse(of viewModel: OverlayViewModel) async -> Bool {
+        for _ in 0..<200 {
+            if viewModel.strip?.isExpanded == false { return true }
             await Task.yield()
         }
         return false
