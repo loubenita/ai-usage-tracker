@@ -17,7 +17,7 @@ public final class OverlayViewModel {
     /// Process discovery is fresh enough to feel live without launching `ps` every two seconds.
     public static let defaultReloadInterval = 6
     /// The compact rail waits for a deliberate still hover before revealing the session list.
-    public static let defaultStripHoverDelay: Duration = .seconds(3)
+    public static let defaultStripHoverDelay: Duration = .seconds(1)
     /// How long an open rail waits after an exit before closing, longer than its grow animation.
     public static let defaultStripLeaveGrace: Duration = .milliseconds(600)
     public private(set) var report: UsageReport?
@@ -232,7 +232,7 @@ public final class OverlayViewModel {
         isPointerOverStrip = inside
     }
 
-    /// Compact content opens only after three continuous seconds with the pointer still.
+    /// Compact content opens only after one continuous second with the pointer still.
     /// Every coordinate change starts a fresh dwell; the handle never calls this intent.
     public func pointerMovedOverStrip(at location: CGPoint = .zero) {
         guard !isDraggingStrip else { return }

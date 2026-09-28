@@ -69,8 +69,8 @@ struct OverlayViewModelTests {
         #expect(await waitsForCollapse(of: viewModel))
     }
 
-    @Test func compactRailUsesAThreeSecondDwellByDefault() {
-        #expect(OverlayViewModel.defaultStripHoverDelay == .seconds(3))
+    @Test func compactRailUsesAOneSecondDwellByDefault() {
+        #expect(OverlayViewModel.defaultStripHoverDelay == .seconds(1))
     }
 
     @Test func theLeaveGraceOutlastsTheRailTransition() {
