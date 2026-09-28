@@ -247,6 +247,7 @@ public final class OverlayViewModel {
         let delay = stripHoverDelay
         stripHoverTask = Task { [weak self] in
             guard await self?.stripHoverSleeper(delay) == true, !Task.isCancelled else { return }
+            self?.willExpandStrip?()
             self?.isPointerOverStrip = true
             self?.stripHoverTask = nil
         }
@@ -284,6 +285,10 @@ public final class OverlayViewModel {
     /// Where the pointer is, in the same coordinates as `stripFrameChanged`, when the platform
     /// can say. Without it an exit is taken at its word.
     @ObservationIgnored public var pointerLocation: (@MainActor () -> CGPoint?)?
+
+    /// Called just before the rail opens, so the window can make room first and the rail grows
+    /// from where it is on screen.
+    @ObservationIgnored public var willExpandStrip: (@MainActor () -> Void)?
 
     /// Where the rail is drawn, so a reported exit can be checked against the pointer.
     public func stripFrameChanged(_ frame: CGRect) {

@@ -73,6 +73,30 @@ struct OverlayViewModelTests {
         #expect(OverlayViewModel.defaultStripHoverDelay == .seconds(1))
     }
 
+    /// The window must make room before the rail grows, or the growth starts from where the
+    /// rail sat in the narrower window: well to its left on screen.
+    @Test func theWindowIsToldBeforeTheRailOpens() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let repository = FakeUsageRepository(calendar: calendar)
+        let sleeper = HoverDwellSleeper()
+        let viewModel = OverlayViewModel(
+            repository: repository,
+            timeSource: FixedTime(now: repository.anchor),
+            calendar: calendar,
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) }
+        )
+        await viewModel.load()
+        var expandedWhenTold: [Bool?] = []
+        viewModel.willExpandStrip = { expandedWhenTold.append(viewModel.strip?.isExpanded) }
+
+        viewModel.pointerMovedOverStrip(at: .zero)
+        #expect(await waitsForSleeps(1, from: sleeper))
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
+        #expect(expandedWhenTold == [false])
+    }
+
     @Test func theLeaveGraceIsTooShortToNotice() {
         #expect(OverlayViewModel.defaultStripLeaveGrace <= .milliseconds(150))
         #expect(OverlayViewModel.defaultStripLeaveGrace > .zero)
