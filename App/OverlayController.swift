@@ -17,6 +17,8 @@ final class OverlayController {
     private let launchState: LaunchState
     private let panel: OverlayPanel
     private var outsideClickMonitor: Any?
+    /// A pending narrowing of the window, waiting for the glass to finish shrinking.
+    private var shrinkTask: Task<Void, Never>?
     private lazy var escape = EscapeHotKey { [weak self] in self?.viewModel.close() }
 
     init(viewModel: OverlayViewModel, launchState: LaunchState) {
@@ -65,14 +67,19 @@ final class OverlayController {
         let visible = screen.visibleFrame
         let width = overlayWidth
         let frame = NSRect(x: screen.frame.maxX - width, y: visible.minY, width: width, height: visible.height)
-        guard animated, panel.frame != frame else {
+        shrinkTask?.cancel()
+        shrinkTask = nil
+        // The window is transparent; only the glass inside it animates. Animating the window's
+        // own frame clipped the glass to its moving left edge, so a panel seemed to slide in.
+        // It widens at once, before the glass grows, and narrows once the glass has shrunk.
+        guard animated, frame.width < panel.frame.width else {
             panel.setFrame(frame, display: true)
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = StripLayout.railTransitionDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            panel.animator().setFrame(frame, display: true)
+        shrinkTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(StripLayout.railTransitionDuration))
+            guard !Task.isCancelled else { return }
+            self?.panel.setFrame(frame, display: true)
         }
     }
 
