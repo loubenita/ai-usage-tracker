@@ -174,6 +174,23 @@ struct StripLayoutTests {
         #expect(tall.height == available && tall.offset == 0 && tall.scrolls)
     }
 
+    @Test func aSessionPanelLinesUpItsTopWithTheClickedRow() {
+        #expect(available == 900)
+        // A row 100pt from the top: the 400pt panel's top is level with it.
+        #expect(StripLayout.place(panel: 400, available: available, top: 100).offset == -150)
+        // A row near the bottom: the panel is pushed up until its bottom meets the screen's.
+        #expect(StripLayout.place(panel: 400, available: available, top: 800).offset == 250)
+        // Taller than the screen: it fills the height and scrolls.
+        let tall = StripLayout.place(panel: 1_000, available: available, top: 300)
+        #expect(tall.height == available && tall.offset == 0 && tall.scrolls)
+    }
+
+    @Test func theUsagePanelLinesUpItsBottomWithTheUsageButton() {
+        #expect(StripLayout.place(panel: 400, available: available, bottom: 850).offset == 200)
+        // A button near the top: the panel is pushed down until its top meets the screen's.
+        #expect(StripLayout.place(panel: 400, available: available, bottom: 100).offset == -250)
+    }
+
     private func item(id: String, priority: Int) -> StripItemModel {
         StripItemModel(
             id: id,

@@ -125,4 +125,15 @@ public enum StripLayout {
     public static func place(panel height: CGFloat, available: CGFloat, beside: CGFloat) -> Placement {
         place(contentHeight: height, restHeight: height, available: available, offset: beside)
     }
+
+    /// A session panel whose top is level with the clicked row, `top` points below the top of
+    /// the available height, but pushed back on when it would run off the screen.
+    public static func place(panel height: CGFloat, available: CGFloat, top: CGFloat) -> Placement {
+        place(panel: height, available: available, beside: top + height / 2 - available / 2)
+    }
+
+    /// The usage panel, whose bottom is level with the Usage button's, kept on the screen.
+    public static func place(panel height: CGFloat, available: CGFloat, bottom: CGFloat) -> Placement {
+        place(panel: height, available: available, beside: bottom - height / 2 - available / 2)
+    }
 }

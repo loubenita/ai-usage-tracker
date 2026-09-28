@@ -14,6 +14,8 @@ struct StripView: View {
     let onHover: (_ sessionID: String, _ inside: Bool) -> Void
     let onClick: (String) -> Void
     let onUsage: () -> Void
+    /// Where each row, and the Usage button, sits in the overlay, so a panel can line up with it.
+    let onAnchor: (_ id: String, _ frame: CGRect) -> Void
     let onDragBegin: () -> Void
     let onDrag: (_ offset: CGFloat, _ limit: CGFloat) -> Void
     let onDragEnd: () -> Void
@@ -28,7 +30,9 @@ struct StripView: View {
             }
             VStack(spacing: 0) {
                 if model.isExpanded {
-                    ExpandedContents(model: model, onHover: onHover, onClick: onClick, onUsage: onUsage)
+                    ExpandedContents(
+                        model: model, onHover: onHover, onClick: onClick, onUsage: onUsage, onAnchor: onAnchor
+                    )
                 } else {
                     RestingContents(model: model, onUsage: onUsage)
                 }
@@ -168,6 +172,7 @@ private struct ExpandedContents: View {
     let onHover: (_ sessionID: String, _ inside: Bool) -> Void
     let onClick: (String) -> Void
     let onUsage: () -> Void
+    let onAnchor: (_ id: String, _ frame: CGRect) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -191,13 +196,19 @@ private struct ExpandedContents: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 6)
             ViewThatFits(in: .vertical) {
-                VStack(spacing: 0) { items; UsageButton(action: onUsage).padding(.top, 6) }
+                VStack(spacing: 0) { items; usageButton }
                 VStack(spacing: 0) {
                     ScrollView(.vertical) { items }.scrollIndicators(.automatic)
-                    UsageButton(action: onUsage).padding(.top, 6)
+                    usageButton
                 }
             }
         }
+    }
+
+    private var usageButton: some View {
+        UsageButton(action: onUsage)
+            .reportsAnchor(StripAnchor.usage, to: onAnchor)
+            .padding(.top, 6)
     }
 
     private var items: some View {
@@ -206,6 +217,7 @@ private struct ExpandedContents: View {
                 StripItemView(item: item)
                     .onHover { inside in onHover(item.id, inside) }
                     .onTapGesture { onClick(item.id) }
+                    .reportsAnchor(item.id, to: onAnchor)
                 if item.id != model.items.last?.id {
                     Rectangle()
                         .fill(Theme.divider)
@@ -298,5 +310,19 @@ private struct UsageButton: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.lift(0.16)))
         .padding(.horizontal, 10)
         .clickable("Usage", action: action)
+    }
+}
+
+/// What an open panel lines up with: a session row by its id, or the Usage button.
+enum StripAnchor {
+    /// The overlay's coordinate space, which spans the height the strip and panel may use.
+    static let space = "overlay"
+    static let usage = "usage"
+}
+
+extension View {
+    /// Reports this view's frame in the overlay's coordinate space whenever it changes.
+    func reportsAnchor(_ id: String, to report: @escaping (_ id: String, _ frame: CGRect) -> Void) -> some View {
+        onGeometryChange(for: CGRect.self) { $0.frame(in: .named(StripAnchor.space)) } action: { report(id, $0) }
     }
 }
