@@ -44,6 +44,10 @@ public enum StripLayout {
     public static func isCompactHoverTarget(y: CGFloat) -> Bool {
         y >= compactVerticalInset + handleBand + compactHandleToContentSpacing
     }
+    /// The pointer is on the visible rail, of `size`, and, when compact, below its handle.
+    public static func isHoverTarget(_ point: CGPoint, in size: CGSize, isExpanded: Bool) -> Bool {
+        CGRect(origin: .zero, size: size).contains(point) && (isExpanded || isCompactHoverTarget(y: point.y))
+    }
     /// Maximum height when both compact indicators and the overflow count are present.
     public static let compactHeight = handleBand
         + compactHandleToContentSpacing

@@ -38,6 +38,21 @@ struct StripLayoutTests {
         #expect(StripLayout.isCompactHoverTarget(y: StripLayout.compactHeight - 8))
     }
 
+    /// The full list stays laid out, invisibly, around the compact rail. Only the rail itself
+    /// may start the hover, never the space around it.
+    @Test func onlyThePointerInsideTheVisibleRailCounts() {
+        let rail = CGSize(width: StripLayout.restingWidth, height: 150)
+        #expect(StripLayout.isHoverTarget(CGPoint(x: 18, y: 60), in: rail, isExpanded: false))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: -30, y: 170), in: rail, isExpanded: false))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: 18, y: 170), in: rail, isExpanded: false))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: -4, y: 60), in: rail, isExpanded: false))
+        // The handle is for dragging, not hovering.
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: 18, y: 10), in: rail, isExpanded: false))
+        let open = CGSize(width: StripLayout.expandedWidth, height: 400)
+        #expect(StripLayout.isHoverTarget(CGPoint(x: 100, y: 10), in: open, isExpanded: true))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: 100, y: 420), in: open, isExpanded: true))
+    }
+
     // MARK: - Dragging
 
     @Test func theStripFollowsThePointerFromWhereItWas() {

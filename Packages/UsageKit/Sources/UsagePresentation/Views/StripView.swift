@@ -30,6 +30,8 @@ struct StripView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var start: CGFloat?
     @Namespace private var ringSpace
+    /// The rail's visible size, which alone counts for hovering.
+    @State private var railSize: CGSize = .zero
 
     private var morph: RingMorph {
         RingMorph(
@@ -63,10 +65,12 @@ struct StripView: View {
         .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.stripRadius))
         // Keep one hover region while the compact and expanded contents swap. The coordinate
         // gate excludes the handle, but an exit from the actual rail always closes it.
+        // The hidden list, laid out around the compact rail, would otherwise count as the rail.
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { railSize = $0 }
         .onContinuousHover { phase in
             switch phase {
             case .active(let point):
-                if model.isExpanded || StripLayout.isCompactHoverTarget(y: point.y) {
+                if StripLayout.isHoverTarget(point, in: railSize, isExpanded: model.isExpanded) {
                     onPointerMoved(point)
                 } else {
                     onPointerLeft()
