@@ -18,8 +18,9 @@ public final class OverlayViewModel {
     public static let defaultReloadInterval = 6
     /// The compact rail waits for a deliberate still hover before revealing the session list.
     public static let defaultStripHoverDelay: Duration = .seconds(1)
-    /// How long an open rail waits after an exit before closing, longer than its grow animation.
-    public static let defaultStripLeaveGrace: Duration = .milliseconds(600)
+    /// How long an open rail waits after an exit before closing: long enough to ignore an exit
+    /// reported while the rail changes shape under a still pointer, too short to notice.
+    public static let defaultStripLeaveGrace: Duration = .milliseconds(150)
     public private(set) var report: UsageReport?
     public private(set) var hoveredSessionID: String?
     public private(set) var openSessionID: String?
@@ -66,6 +67,7 @@ public final class OverlayViewModel {
     @ObservationIgnored private var totalsTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverTask: Task<Void, Never>?
     @ObservationIgnored private var stripLeaveTask: Task<Void, Never>?
+    @ObservationIgnored private var stripFrame: CGRect?
     /// How many times the totals were built: the tests count them.
     @ObservationIgnored private(set) var totalsBuilds = 0
     /// When the totals are next rebuilt on their own; the overview counts down to it.
@@ -268,10 +270,29 @@ public final class OverlayViewModel {
         guard isPointerOverStrip, stripLeaveTask == nil else { return }
         let grace = stripLeaveGrace
         stripLeaveTask = Task { [weak self] in
-            guard await self?.stripHoverSleeper(grace) == true, !Task.isCancelled else { return }
+            // The view can report an exit while the pointer is still on the rail, as the rail
+            // changes shape under it, and then report nothing more. So the pointer's real
+            // position decides, looked at again until it has gone.
+            repeat {
+                guard await self?.stripHoverSleeper(grace) == true, !Task.isCancelled else { return }
+            } while self?.isPointerStillOnStrip == true
             self?.isPointerOverStrip = false
             self?.stripLeaveTask = nil
         }
+    }
+
+    /// Where the pointer is, in the same coordinates as `stripFrameChanged`, when the platform
+    /// can say. Without it an exit is taken at its word.
+    @ObservationIgnored public var pointerLocation: (@MainActor () -> CGPoint?)?
+
+    /// Where the rail is drawn, so a reported exit can be checked against the pointer.
+    public func stripFrameChanged(_ frame: CGRect) {
+        stripFrame = frame
+    }
+
+    private var isPointerStillOnStrip: Bool {
+        guard let frame = stripFrame, let location = pointerLocation?() else { return false }
+        return frame.contains(location)
     }
 
     /// Hovering an item highlights it and stops its "needs you" dot pulsing.

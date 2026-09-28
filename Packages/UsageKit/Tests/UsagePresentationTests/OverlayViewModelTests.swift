@@ -73,8 +73,44 @@ struct OverlayViewModelTests {
         #expect(OverlayViewModel.defaultStripHoverDelay == .seconds(1))
     }
 
-    @Test func theLeaveGraceOutlastsTheRailTransition() {
-        #expect(OverlayViewModel.defaultStripLeaveGrace > .milliseconds(Int(StripLayout.railTransitionDuration * 1000)))
+    @Test func theLeaveGraceIsTooShortToNotice() {
+        #expect(OverlayViewModel.defaultStripLeaveGrace <= .milliseconds(150))
+        #expect(OverlayViewModel.defaultStripLeaveGrace > .zero)
+    }
+
+    /// An exit reported while the pointer is still over the rail, with nothing after it, must not
+    /// close the rail. It closes once the pointer really is somewhere else.
+    @Test func anExitWhileThePointerIsStillOnTheRailKeepsItOpenUntilItLeaves() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let repository = FakeUsageRepository(calendar: calendar)
+        let sleeper = HoverDwellSleeper()
+        let viewModel = OverlayViewModel(
+            repository: repository,
+            timeSource: FixedTime(now: repository.anchor),
+            calendar: calendar,
+            stripHoverSleeper: { delay in await sleeper.sleep(for: delay) }
+        )
+        await viewModel.load()
+        var pointer = CGPoint(x: 50, y: 50)
+        viewModel.pointerLocation = { pointer }
+        viewModel.stripFrameChanged(CGRect(x: 0, y: 0, width: 100, height: 100))
+
+        viewModel.pointerMovedOverStrip(at: .zero)
+        #expect(await waitsForSleeps(1, from: sleeper))
+        await sleeper.releaseAll()
+        #expect(await waitsForExpansion(of: viewModel))
+
+        viewModel.pointerLeftStrip()
+        #expect(await waitsForSleeps(2, from: sleeper))
+        await sleeper.releaseAll()
+        // Still over the rail: it stays open and looks again.
+        #expect(await waitsForSleeps(3, from: sleeper))
+        #expect(viewModel.strip?.isExpanded == true)
+
+        pointer = CGPoint(x: 300, y: 50)
+        await sleeper.releaseAll()
+        #expect(await waitsForCollapse(of: viewModel))
     }
 
     /// Growing the rail under a still pointer makes the view report an exit and then the pointer

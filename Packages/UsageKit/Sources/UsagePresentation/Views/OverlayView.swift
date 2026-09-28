@@ -74,6 +74,9 @@ public struct OverlayView: View {
                         model: model,
                         availableHeight: availableHeight,
                         offset: strip.offset,
+                        growthAnchor: StripLayout.growthAnchor(
+                            restHeight: restStripHeight, available: availableHeight, offset: viewModel.stripOffset
+                        ),
                         dragOrigin: StripLayout.dragOrigin(for: strip),
                         isDragging: viewModel.isDraggingStrip,
                         restHeight: restStripHeight,
@@ -91,7 +94,8 @@ public struct OverlayView: View {
                         onAnchor: { id, frame in anchors[id] = frame },
                         onDragBegin: { viewModel.beginStripDrag() },
                         onDrag: { offset, limit in viewModel.dragStrip(to: offset, limit: limit) },
-                        onDragEnd: { viewModel.endStripDrag() }
+                        onDragEnd: { viewModel.endStripDrag() },
+                        onFrame: { viewModel.stripFrameChanged($0) }
                     )
                     // The resting rail is a macOS surface with air around it, not a clipped
                     // extension of the screen edge. The expanded list keeps that same inset.

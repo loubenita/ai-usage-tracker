@@ -174,6 +174,22 @@ struct StripLayoutTests {
         #expect(tall.height == available && tall.offset == 0 && tall.scrolls)
     }
 
+    @Test func theGrowthAnchorIsThePointThatStaysStillWhileTheRailGrows() {
+        let rest: CGFloat = 150
+        for offset: CGFloat in [-375, -200, 0, 120, 375] {
+            let anchor = StripLayout.growthAnchor(restHeight: rest, available: available, offset: offset)
+            let resting = StripLayout.place(contentHeight: rest, restHeight: rest, available: available, offset: offset)
+            let grown = StripLayout.place(contentHeight: 400, restHeight: rest, available: available, offset: offset)
+            // The same fraction of the rail's height sits at the same height on screen.
+            let before = resting.offset + (anchor - 0.5) * rest
+            let after = grown.offset + (anchor - 0.5) * 400
+            #expect(abs(before - after) < 0.001)
+        }
+        #expect(StripLayout.growthAnchor(restHeight: rest, available: available, offset: 0) == 0.5)
+        #expect(StripLayout.growthAnchor(restHeight: rest, available: available, offset: 375) == 1)
+        #expect(StripLayout.growthAnchor(restHeight: rest, available: available, offset: -375) == 0)
+    }
+
     @Test func aSessionPanelLinesUpItsTopWithTheClickedRow() {
         #expect(available == 900)
         // A row 100pt from the top: the 400pt panel's top is level with it.

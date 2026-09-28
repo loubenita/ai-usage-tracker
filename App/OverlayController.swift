@@ -38,6 +38,12 @@ final class OverlayController {
         ) { NSApp.terminate(nil) })
         host.sizingOptions = []
         panel.contentView = host
+        // The pointer in the hosting view's top-left coordinates, SwiftUI's global space here.
+        viewModel.pointerLocation = { [weak panel, weak host] in
+            guard let panel, let host else { return nil }
+            let point = host.convert(panel.mouseLocationOutsideOfEventStream, from: nil)
+            return host.isFlipped ? point : CGPoint(x: point.x, y: host.bounds.height - point.y)
+        }
     }
 
     func show() {
