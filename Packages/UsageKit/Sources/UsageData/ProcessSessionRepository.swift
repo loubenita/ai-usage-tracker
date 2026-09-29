@@ -187,6 +187,8 @@ public struct ProcessSessionRepository: UsageRepository {
                     ) != nil
                 }
                 : nil
+            // An idle spare the daemon keeps warm has no session file until it is claimed.
+            if found.agent == .claudeCode, found.isBackground, claude == nil { return }
             folder = source.workingDirectory(of: process.pid) ?? claude?.file.cwd ?? homeDirectory
             work = WorkNamer(files: files, homeDirectory: homeDirectory).work(folder: folder, branch: nil)
             let before = live.claimed

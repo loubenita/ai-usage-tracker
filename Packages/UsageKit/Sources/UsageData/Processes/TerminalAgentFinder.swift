@@ -7,14 +7,37 @@ struct TerminalAgentProcess: Sendable, Hashable {
     let agent: Agent
     let tty: String
     let terminal: TerminalApp
+    /// Run by Claude Code's daemon rather than a terminal. Its idle spares look the same, so it
+    /// counts as a session only once it has a session file.
+    var isBackground: Bool { terminal == .background }
 }
 
 /// Picks the agent sessions out of a process table.
 ///
-/// A session is an agent process with a terminal attached whose parent chain holds no
-/// other agent. That drops sub-agents (`claude -p` or `codex exec` started by another
-/// agent, and the native binary a Node launcher starts) and background jobs (no TTY).
+/// A session is an agent process whose parent chain holds no other agent. That drops
+/// sub-agents (`claude -p` or `codex exec` started by another agent, and the native binary a
+/// Node launcher starts). One started without a terminal, by a script or a scheduler, is a
+/// background session.
+///
+/// Servers are not sessions: the ChatGPT app's `codex app-server`, `opencode serve`, and
+/// Claude Code's daemon, which runs each background session as `claude bg-spare` under a
+/// `claude bg-pty-host`. Being machinery rather than agents, they do not hide what runs
+/// under them.
 enum TerminalAgentFinder {
+    /// Servers and daemons an agent runs for other apps or for its own machinery: the ChatGPT
+    /// app's `codex app-server`, `opencode serve`, Claude Code's `daemon` and `bg-pty-host`.
+    /// They host sessions but are not one.
+    static let serverCommands: Set<String> = [
+        "daemon", "bg-pty-host", "app-server", "mcp-server", "mcp", "serve", "server", "acp",
+    ]
+    static let claudeBackgroundCommand = "bg-spare"
+
+    /// A server's subcommand comes early, after at most a few options; a prompt that merely
+    /// mentions one, as in `codex exec fix the app-server tests`, comes later.
+    static func isServer(_ arguments: [String]) -> Bool {
+        arguments.dropFirst().prefix(4).contains { serverCommands.contains($0) }
+    }
+
     /// Program names of the agents, as the process table shows them.
     static let agentNames: [String: Agent] = [
         "claude": .claudeCode,
@@ -34,10 +57,17 @@ enum TerminalAgentFinder {
         let byPID = Dictionary(rows.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         return rows
             .compactMap { row -> TerminalAgentProcess? in
-                guard let agent = agent(of: row), let tty = row.tty else { return nil }
+                guard let agent = agent(of: row) else { return nil }
                 let ancestors = ancestors(of: row, in: byPID)
                 guard !ancestors.contains(where: { self.agent(of: $0) != nil }) else { return nil }
-                return TerminalAgentProcess(process: row, agent: agent, tty: tty, terminal: terminal(in: ancestors))
+                // Started without a terminal, by a script or a scheduler, or run by Claude Code's
+                // daemon, whose sessions have a terminal of their own but no app showing it.
+                let isBackground = row.tty == nil
+                    || (agent == .claudeCode && row.arguments.dropFirst().first == claudeBackgroundCommand)
+                return TerminalAgentProcess(
+                    process: row, agent: agent, tty: row.tty ?? "",
+                    terminal: isBackground ? .background : terminal(in: ancestors)
+                )
             }
             .sorted { ($0.process.startedAt, $0.process.pid) < ($1.process.startedAt, $1.process.pid) }
     }
@@ -47,7 +77,9 @@ enum TerminalAgentFinder {
         let arguments = row.arguments
         guard let first = arguments.first else { return nil }
         let name = ProcessRow.baseName(first)
-        if let agent = agentNames[name] { return agent }
+        if let agent = agentNames[name] {
+            return isServer(arguments) ? nil : agent
+        }
         // A program inside an app bundle whose name has a space, such as
         // "/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat": `ps` splits it at the space.
         if let bundled = row.command.range(of: ".app/Contents/MacOS/") {
@@ -55,7 +87,7 @@ enum TerminalAgentFinder {
             if let agent = agentNames[String(program)] { return agent }
         }
         guard runtimes.contains(name), arguments.count > 1 else { return nil }
-        return agentNames[ProcessRow.baseName(arguments[1])]
+        return isServer(Array(arguments.dropFirst())) ? nil : agentNames[ProcessRow.baseName(arguments[1])]
     }
 
     /// The terminal app a tmux client runs in, for sessions inside tmux: tmux's server is not a

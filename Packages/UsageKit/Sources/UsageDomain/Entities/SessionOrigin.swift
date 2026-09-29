@@ -3,6 +3,8 @@ import Foundation
 /// The terminal app that owns a session's TTY.
 public enum TerminalApp: String, Sendable, Hashable, CaseIterable {
     case warp, terminal, iterm, ghostty, tmux, unknown
+    /// A Claude Code background session, run by its daemon with no terminal app to show.
+    case background
 
     public var displayName: String {
         switch self {
@@ -12,6 +14,7 @@ public enum TerminalApp: String, Sendable, Hashable, CaseIterable {
         case .ghostty: "Ghostty"
         case .tmux: "tmux"
         case .unknown: "Terminal"
+        case .background: "Background"
         }
     }
 }

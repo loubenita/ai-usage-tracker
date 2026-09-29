@@ -301,6 +301,57 @@ struct ProcessSessionRepositoryTests {
             == root.path + "/.claude-loubenita")
     }
 
+    /// Claude Code's background sessions run under its daemon, with no terminal app above them.
+    /// A claimed one has a session file; an idle spare kept warm for the next one does not.
+    @Test func findsBackgroundClaudeSessionsButNotIdleSpares() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(".claude/sessions"), withIntermediateDirectories: true
+        )
+        try """
+        {"pid":81303,"sessionId":"bg-lead","cwd":"/tmp","name":"lead","kind":"bg","status":"busy"}
+        """.write(to: root.appendingPathComponent(".claude/sessions/81303.json"), atomically: true, encoding: .utf8)
+        let table = """
+          PID  PPID TTY      STARTED                      COMMAND
+            1     0 ??       Mon Aug 24 20:16:04 2026     /sbin/launchd
+        48744     1 ??       Sun Sep 27 09:00:00 2026     /Users/me/.local/bin/claude daemon run --json-path /Users/me/.claude/daemon.json
+        81290     1 ??       Sun Sep 27 09:01:00 2026     claude bg-pty-host --bg-pty-host /tmp/cc/a.pty.sock 200 50 -- /Users/me/.local/share/claude/versions/2.1.283
+        81303 81290 ttys000  Sun Sep 27 09:01:00 2026     claude bg-spare --bg-spare /tmp/cc/a.claim.sock
+        48968 48744 ??       Sun Sep 27 09:02:00 2026     claude bg-pty-host --bg-pty-host /tmp/cc/b.pty.sock 200 50 -- /Users/me/.local/share/claude/versions/2.1.284
+        49053 48968 ??       Sun Sep 27 09:02:00 2026     claude bg-spare --bg-spare /tmp/cc/b.claim.sock
+        """
+        let repository = ProcessSessionRepository(
+            source: RecordedSource(text: table), homeDirectory: root.path, timeZone: Fixture.london
+        )
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        #expect(records.sessionEvents.compactMap(\.origin?.pid) == [81303])
+        let lead = try #require(records.sessionEvents.first?.origin)
+        #expect(lead.terminal == .background)
+        #expect(lead.sessionName == "lead")
+    }
+
+    /// Any agent started without a terminal, by a script or a scheduler, is a background session.
+    /// Servers other apps talk to are not sessions, and neither is anything another agent started.
+    @Test func findsBackgroundSessionsOfEveryAgentButNotServers() {
+        let rows = ProcessTable.parse("""
+          PID  PPID TTY      STARTED                      COMMAND
+            1     0 ??       Mon Aug 24 20:16:04 2026     /sbin/launchd
+          500     1 ??       Sun Sep 27 09:00:00 2026     /bin/sh /Users/me/nightly.sh
+          501   500 ??       Sun Sep 27 09:00:01 2026     codex exec tidy the changelog
+          502   500 ??       Sun Sep 27 09:00:02 2026     opencode run write the release notes
+          503     1 ??       Sun Sep 27 09:00:03 2026     cursor-agent -p review the diff
+        27805 27063 ??       Sun Sep 27 09:00:04 2026     /Applications/ChatGPT.app/Contents/Resources/codex app-server --listen stdio://
+        84161     1 ??       Sun Sep 27 09:00:05 2026     /Users/me/.codex/bin/codex app-server daemon pid-update-loop
+          600     1 ??       Sun Sep 27 09:00:06 2026     opencode serve --port 4096
+          700     1 ??       Sun Sep 27 09:00:07 2026     claude -p plan the week
+          701   700 ??       Sun Sep 27 09:00:08 2026     codex exec a sub-agent's task
+        """, timeZone: Fixture.london)
+        let found = TerminalAgentFinder.find(in: rows)
+        #expect(found.map(\.process.pid) == [501, 502, 503, 700])
+        #expect(found.allSatisfy { $0.terminal == .background })
+    }
+
     @Test func servesOneStartRecordPerSession() async throws {
         let repository = ProcessSessionRepository(
             source: RecordedSource(text: try Fixture.text("ps-2026-09-21.txt")),
