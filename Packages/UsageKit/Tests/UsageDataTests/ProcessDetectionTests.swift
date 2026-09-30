@@ -331,6 +331,18 @@ struct ProcessSessionRepositoryTests {
         #expect(lead.sessionName == "lead")
     }
 
+    /// `claude attach <id>` shows a background session in a terminal. It is a window onto that
+    /// session, not a session of its own, so it must not be counted twice.
+    @Test func aWindowAttachedToABackgroundSessionIsNotASessionOfItsOwn() {
+        let rows = ProcessTable.parse("""
+          PID  PPID TTY      STARTED                      COMMAND
+            1     0 ??       Mon Aug 24 20:16:04 2026     /sbin/launchd
+        34833     1 ttys002  Wed Sep 30 09:00:00 2026     -zsh
+        35334 34833 ttys002  Wed Sep 30 09:00:01 2026     claude attach 8ea55422
+        """, timeZone: Fixture.london)
+        #expect(TerminalAgentFinder.find(in: rows).isEmpty)
+    }
+
     /// Any agent started without a terminal, by a script or a scheduler, is a background session.
     /// Servers other apps talk to are not sessions, and neither is anything another agent started.
     @Test func findsBackgroundSessionsOfEveryAgentButNotServers() {

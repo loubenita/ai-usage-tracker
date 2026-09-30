@@ -78,6 +78,8 @@ enum TerminalAgentFinder {
         guard let first = arguments.first else { return nil }
         let name = ProcessRow.baseName(first)
         if let agent = agentNames[name] {
+            // `claude attach <id>` is a window onto a background session, which is found itself.
+            if agent == .claudeCode, arguments.dropFirst().first == "attach" { return nil }
             return isServer(arguments) ? nil : agent
         }
         // A program inside an app bundle whose name has a space, such as
