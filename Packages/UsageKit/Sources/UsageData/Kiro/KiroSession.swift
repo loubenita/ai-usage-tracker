@@ -4,14 +4,18 @@ import UsageDomain
 /// What a Kiro CLI session file (`~/.kiro/sessions/cli/<session id>.json`) says about usage.
 ///
 /// The file is rewritten as the session goes, so it is read whole each time it changes. The
-/// field names follow the reader in tokscale (github.com/junhoyeo/tokscale,
-/// `crates/tokscale-core/src/sessions/kiro.rs`), which was built against real Kiro files;
-/// Kiro was not installed on the Mac this was written on.
+/// field names first followed the reader in tokscale (github.com/junhoyeo/tokscale,
+/// `crates/tokscale-core/src/sessions/kiro.rs`) and were then checked against a session file
+/// from a real Kiro install.
 ///
-/// - `session_state.rts_model_state.model_info` has the model and its context window.
-/// - `session_state.conversation_metadata.user_turn_metadatas` has one entry per request, with
-///   its token counts and how full the context was. Kiro's Auto agent reports zero tokens, so
-///   a request with no counts reports its tokens as unknown, not as zero.
+/// - `session_state.rts_model_state.model_info` has the session's model and its context window
+///   (1,000,000 tokens on current builds).
+/// - `session_state.conversation_metadata.user_turn_metadatas` has one entry per request: the
+///   model that answered it, how long it took, how many tools it called, how full the context
+///   was and what it cost in credits. A session can mix models, so each request keeps its own.
+/// - Each entry also has token counts, but current builds write every one of them as 0. A
+///   request with no counts reports its tokens as unknown, not as zero. The credits in
+///   `metering_usage` are what Kiro really reports.
 struct KiroSession: Sendable, Hashable {
     struct Request: Sendable, Hashable {
         let timestamp: Date?
@@ -19,8 +23,21 @@ struct KiroSession: Sendable, Hashable {
         let contextPercent: Double?
         /// What Kiro billed for the request: its `metering_usage` entries whose unit is "credit".
         let credits: Double?
+        /// The model that answered this request, as the request itself names it: "auto" or
+        /// "claude-opus-4.8". It can differ from the session's model.
+        let model: String?
+        /// How long the request took: `turn_duration`, written as seconds and nanoseconds.
+        let duration: TimeInterval?
+        /// Tools the request called: `builtin_tool_uses`.
+        let toolCalls: Int?
+        /// Characters in Kiro's reply (`assistant_response_length`) and in the prompt
+        /// (`user_prompt_length`).
+        let responseLength: Int?
+        let promptLength: Int?
     }
 
+    /// The window when a file leaves `context_window_tokens` out, as older Kiro files do.
+    /// Current files carry their own, 1,000,000 tokens, which is what is read from the data.
     static let defaultContextWindow = 200_000
 
     let sessionID: String
@@ -57,8 +74,20 @@ struct KiroSession: Sendable, Hashable {
             timestamp: date(turn["end_timestamp"]),
             tokens: (counts.total ?? 0) > 0 ? counts : nil,
             contextPercent: (turn["context_usage_percentage"] as? NSNumber)?.doubleValue,
-            credits: metering.flatMap { $0.isEmpty ? nil : $0.reduce(0, +) }
+            credits: metering.flatMap { $0.isEmpty ? nil : $0.reduce(0, +) },
+            model: turn["model"] as? String,
+            duration: duration(turn["turn_duration"]),
+            toolCalls: count("builtin_tool_uses"),
+            responseLength: count("assistant_response_length"),
+            promptLength: count("user_prompt_length")
         )
+    }
+
+    /// A length of time written as `{"secs": 553, "nanos": 519031792}`; nil without the seconds.
+    private static func duration(_ value: Any?) -> TimeInterval? {
+        guard let object = value as? [String: Any], let seconds = (object["secs"] as? NSNumber)?.doubleValue
+        else { return nil }
+        return seconds + ((object["nanos"] as? NSNumber)?.doubleValue ?? 0) / 1_000_000_000
     }
 
     /// Credits billed for requests at or after `since`, or nil when no request reported any.
@@ -97,8 +126,9 @@ struct KiroSession: Sendable, Hashable {
         return ContextUsage(used: Int((percent / 100 * Double(window)).rounded()), window: window)
     }
 
-    /// Requests with a time become turns, each with the credits it was billed; cost in dollars
-    /// is not reported, because Kiro bills in credits.
+    /// Requests with a time become turns, each with the model that answered it, the credits it
+    /// was billed, how long it took and the tools it called; cost in dollars is not reported,
+    /// because Kiro bills in credits. A request that names no model takes the session's, or Auto.
     func turns(sessionID: String, work: Work) -> [Turn] {
         requests.enumerated().compactMap { index, request in
             request.timestamp.map { timestamp in
@@ -107,7 +137,7 @@ struct KiroSession: Sendable, Hashable {
                     timestamp: timestamp,
                     agent: .kiro,
                     sessionID: sessionID,
-                    model: ModelName(model ?? "auto"),
+                    model: ModelName(request.model ?? self.model ?? "auto"),
                     work: work,
                     tokens: request.tokens,
                     cost: Cost(usd: nil),
@@ -116,7 +146,9 @@ struct KiroSession: Sendable, Hashable {
                             ContextUsage(used: Int(($0 / 100 * Double(window)).rounded()), window: window)
                         }
                     },
-                    credits: request.credits
+                    duration: request.duration,
+                    credits: request.credits,
+                    toolCalls: request.toolCalls
                 )
             }
         }

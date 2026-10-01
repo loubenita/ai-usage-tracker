@@ -47,8 +47,10 @@ struct CursorChatTests {
     }
 }
 
-/// Kiro was not installed on the Mac this was written on, so this session file is written by
-/// hand, following the field names of tokscale's Kiro reader. It is not a real Kiro file.
+/// Kiro was not installed on the Mac this was written on, so `json` is written by hand,
+/// following the field names of tokscale's Kiro reader. It is not a real Kiro file. `currentJSON`
+/// is also written by hand, with nothing of anyone's session in it, but it has the fields and
+/// the shapes of a session file from a real Kiro install (1 October 2026).
 @Suite("Reading a Kiro CLI session")
 struct KiroSessionTests {
     static let json = #"""
@@ -127,6 +129,133 @@ struct KiroSessionTests {
 
     @Test func aFileThatIsNotJSONIsSkipped() {
         #expect(KiroSession(json: Data("[".utf8), fallbackID: "file") == nil)
+    }
+
+    /// A current build's file: a million-token window, every token count 0, and two requests
+    /// answered by different models, each billed in credits (the second in two parts).
+    static let currentJSON = #"""
+    {
+      "session_id": "kiro-current",
+      "cwd": "/Users/me/app",
+      "session_created_reason": "user",
+      "session_state": {
+        "rts_model_state": { "model_info": {
+          "model_id": "auto", "model_name": "Auto", "context_window_tokens": 1000000,
+          "rate_multiplier": 1.0, "rate_unit": "credit" } },
+        "conversation_metadata": { "user_turn_metadatas": [
+          { "total_request_count": 62, "number_of_cycles": 61, "builtin_tool_uses": 62,
+            "turn_duration": { "secs": 553, "nanos": 519031792 }, "end_reason": "UserTurnEnd",
+            "end_timestamp": "2026-10-01T09:29:17.541473Z",
+            "input_token_count": 0, "output_token_count": 0,
+            "cache_read_input_token_count": 0, "cache_write_input_token_count": 0,
+            "model": "auto", "assistant_response_length": 32738, "request_attempts": 62,
+            "context_usage_percentage": 12.561899, "final_context_usage_percentage": 12.561899,
+            "metering_usage": [ { "value": 0.0994317, "unit": "credit", "unitPlural": "credits" } ],
+            "user_prompt_length": 1630 },
+          { "total_request_count": 9, "number_of_cycles": 8, "builtin_tool_uses": 7,
+            "turn_duration": { "secs": 90, "nanos": 500000000 }, "end_reason": "UserTurnEnd",
+            "end_timestamp": "2026-10-01T10:15:00.250000Z",
+            "input_token_count": 0, "output_token_count": 0,
+            "cache_read_input_token_count": 0, "cache_write_input_token_count": 0,
+            "model": "claude-opus-4.8", "assistant_response_length": 4100, "request_attempts": 9,
+            "context_usage_percentage": 20.0, "final_context_usage_percentage": 20.0,
+            "metering_usage": [
+              { "value": 0.25, "unit": "credit", "unitPlural": "credits" },
+              { "value": 0.5, "unit": "credit", "unitPlural": "credits" } ],
+            "user_prompt_length": 212 }
+        ] }
+      }
+    }
+    """#
+
+    func currentTurns() throws -> [Turn] {
+        let session = try #require(KiroSession(json: Data(Self.currentJSON.utf8), fallbackID: "file"))
+        return session.turns(sessionID: "kiro-9", work: CodexRolloutTests.work)
+    }
+
+    @Test func eachRequestKeepsTheModelThatAnsweredIt() throws {
+        let turns = try currentTurns()
+        // The session's model is "auto", but its second request was answered by Opus.
+        #expect(turns.map(\.model) == ["auto", "claude-opus-4.8"])
+        let session = try #require(KiroSession(json: Data(Self.currentJSON.utf8), fallbackID: "file"))
+        #expect(session.model == "auto")
+    }
+
+    @Test func aRequestThatNamesNoModelTakesTheSessionsOrAuto() throws {
+        // `json` has a session model and no model on its requests; the file below has neither.
+        let session = try #require(KiroSession(json: Data(Self.json.utf8), fallbackID: "file"))
+        #expect(session.turns(sessionID: "k", work: CodexRolloutTests.work).map(\.model)
+            == ["claude-sonnet-4.5", "claude-sonnet-4.5", "claude-sonnet-4.5"])
+        let bare = #"""
+        { "session_id": "kiro-3", "session_state": { "conversation_metadata": { "user_turn_metadatas": [
+          { "end_timestamp": 1790071200 } ] } } }
+        """#
+        let unnamed = try #require(KiroSession(json: Data(bare.utf8), fallbackID: "file"))
+        #expect(unnamed.turns(sessionID: "k", work: CodexRolloutTests.work).map(\.model) == ["auto"])
+    }
+
+    @Test func eachTurnHasItsDurationToolCallsAndCredits() throws {
+        let turns = try currentTurns()
+        // `turn_duration` is seconds plus nanoseconds.
+        let first = try #require(turns[0].duration)
+        #expect(abs(first - 553.519031792) < 1e-9)
+        #expect(turns[1].duration == 90.5)
+        #expect(turns.map(\.toolCalls) == [62, 7])
+        // A request's credits are the sum of its `metering_usage` entries.
+        let billed = try #require(turns[0].credits)
+        #expect(abs(billed - 0.0994317) < 1e-12)
+        #expect(turns[1].credits == 0.75)
+        // The lengths are read, though nothing shows them yet.
+        let session = try #require(KiroSession(json: Data(Self.currentJSON.utf8), fallbackID: "file"))
+        #expect(session.requests.map(\.responseLength) == [32_738, 4_100])
+        #expect(session.requests.map(\.promptLength) == [1_630, 212])
+    }
+
+    @Test func requestsWithoutThoseFieldsLeaveThemUnknown() throws {
+        let session = try #require(KiroSession(json: Data(Self.json.utf8), fallbackID: "file"))
+        let turns = session.turns(sessionID: "k", work: CodexRolloutTests.work)
+        #expect(turns.allSatisfy { $0.duration == nil && $0.toolCalls == nil })
+        #expect(session.requests.allSatisfy { $0.responseLength == nil && $0.promptLength == nil })
+        // `turn_duration` without its seconds says nothing.
+        let broken = #"""
+        { "session_id": "kiro-4", "session_state": { "conversation_metadata": { "user_turn_metadatas": [
+          { "end_timestamp": 1790071200, "turn_duration": { "nanos": 5 } } ] } } }
+        """#
+        let unmeasured = try #require(KiroSession(json: Data(broken.utf8), fallbackID: "file"))
+        #expect(unmeasured.requests.first?.duration == nil)
+    }
+
+    @Test func zeroTokenCountsLeaveTheTokensOfTheTurnsAndThePeriodUnknown() throws {
+        let turns = try currentTurns()
+        #expect(turns.allSatisfy { $0.tokens == nil })
+        let usage = PeriodUsageBuilder.make(
+            .month, turns: turns, start: .distantPast, bucketStarts: [], openAgents: []
+        )
+        let kiro = try #require(usage.usage(of: .kiro))
+        #expect(kiro.tokens == nil)
+        #expect(kiro.toolCalls == 69)
+        let credits = try #require(kiro.credits)
+        #expect(abs(credits - 0.8494317) < 1e-9)
+    }
+
+    @Test func creditsAreSplitByTheModelThatSpentThem() throws {
+        let byModel = Breakdown.byModel(try currentTurns())
+        // Neither model has tokens, so both stay for their credits, the bigger spender first.
+        #expect(byModel.map(\.model) == ["claude-opus-4.8", "auto"])
+        #expect(byModel.map(\.tokens) == [0, 0])
+        #expect(byModel[0].credits == 0.75)
+        let auto = try #require(byModel[1].credits)
+        #expect(abs(auto - 0.0994317) < 1e-12)
+    }
+
+    @Test func aCurrentFileKeepsItsOwnMillionTokenWindow() throws {
+        let session = try #require(KiroSession(json: Data(Self.currentJSON.utf8), fallbackID: "file"))
+        #expect(session.contextWindow == 1_000_000)
+        // 12.561899% of 1,000,000 is 125,618.99, which rounds to 125,619.
+        let turns = try currentTurns()
+        #expect(turns[0].context == ContextUsage(used: 125_619, window: 1_000_000))
+        // The session's own reading is the latest request's: 20%.
+        #expect(session.context == ContextUsage(used: 200_000, window: 1_000_000))
     }
 }
 
