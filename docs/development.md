@@ -35,7 +35,7 @@ Scripts:
 - `scripts/probe-start-quit.sh <folder>` checks that a new session appears on the strip within 7 seconds, and disappears when it quits.
 - `scripts/install.sh` installs the app from the latest release, as described in [the README](../README.md#install).
 - `scripts/set-version.sh <version>` sets the version in `project.yml` and `App/Info.plist` and adds one to the build number.
-- `scripts/release.sh <version>` builds the app signed by loubenita and zips it for a release. See [Making a release](#making-a-release).
+- `scripts/release.sh <version>` builds the app for Apple silicon and Intel Macs, signed by loubenita or ad hoc, and zips it for a release. See [Making a release](#making-a-release).
 - `scripts/claude-statusline.sh` is a Claude Code status line that saves Claude's limits for the app. See [Claude's limits](../README.md#claudes-limits).
 
 ### Making a release
@@ -47,15 +47,19 @@ The workflow:
 1. Checks the version is newer than the latest release.
 2. Sets it with `scripts/set-version.sh`, which also adds one to the build number.
 3. Runs the tests.
-4. Builds the app signed by the certificate in the `SIGNING_CERTIFICATE_P12` secret, with `scripts/release.sh`.
+4. Builds the app for Apple silicon and Intel Macs with `scripts/release.sh`. It is signed by the certificate in the `SIGNING_CERTIFICATE_P12` secret if there is one, and ad hoc if not.
 5. Commits the new version to `main` as "Release <version>" and tags it `v<version>`.
 6. Publishes the GitHub release, titled "AI Usage Tracker <version>", with `AIUsageTracker.zip`. Its notes have the install steps, the zip's SHA-256 and the pull requests merged since the last release. Edit the release on GitHub to add more.
 
 If `main` changes while it runs, it pushes nothing and releases nothing; run it again.
 
-#### Signing secrets, set up once
+Whichever way it is signed, the app installs on any Mac with macOS 26 or later once its download flag is cleared. It is not notarized, since that needs a paid Developer ID. [Why the xattr command is needed](../README.md#why-the-xattr-command-is-needed) in the README explains the flag.
 
-The workflow signs with loubenita's Apple Development certificate (team C6F25575D8), as the earlier releases were. Signing with the same certificate keeps the permission macOS gave the app to talk to Terminal. Add two secrets under **Settings > Secrets and variables > Actions**:
+#### Signing secrets, optional
+
+Without secrets, the workflow signs the app ad hoc. An ad hoc signature names no developer and differs for each build. So after each update, macOS asks again whether the app may control Terminal, which it needs for **Open**.
+
+With loubenita's Apple Development certificate (team C6F25575D8), as the earlier releases were signed, macOS remembers that permission across updates. To use it, add two secrets under **Settings > Secrets and variables > Actions**:
 
 1. In Keychain Access, find the "Apple Development" certificate under **My Certificates**, right-click it, choose **Export**, save it as a `.p12` file, and give it a password.
 2. Copy the file as base64 with `base64 -i Certificates.p12 | pbcopy`. Paste it into a secret named `SIGNING_CERTIFICATE_P12`.
@@ -65,5 +69,5 @@ The workflow signs with loubenita's Apple Development certificate (team C6F25575
 #### By hand
 
 1. `scripts/set-version.sh <version>`.
-2. `SIGN_IDENTITY="Apple Development: …" scripts/release.sh <version>`. It builds the app signed by loubenita's Apple Development certificate (team C6F25575D8), checks the signature, and zips the app to `build/release/AIUsageTracker.zip`.
+2. `SIGN_IDENTITY="Apple Development: …" scripts/release.sh <version>`, or `SIGN_IDENTITY=-` to sign ad hoc. It builds the app for Apple silicon and Intel Macs, checks both are in it, checks the signature, and zips the app to `build/release/AIUsageTracker.zip`.
 3. Commit the version change, then publish: `gh release create v<version> build/release/AIUsageTracker.zip --title "AI Usage Tracker <version>"`.

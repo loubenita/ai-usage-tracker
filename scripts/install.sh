@@ -3,9 +3,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/scripts/install.sh | bash
 #
-# The app is signed with an Apple Development certificate but not notarized, so macOS would
-# refuse to open a downloaded copy. This script removes the download's quarantine flag, which
-# is what makes macOS ask, and then opens the app.
+# The app is signed but not notarized, so macOS refuses to open a downloaded copy. This script
+# removes the download's quarantine flag, which is what makes macOS check, and then opens the
+# app. The README's "Why the xattr command is needed" explains it.
 set -euo pipefail
 
 url="https://github.com/loubenita/ai-usage-tracker/releases/latest/download/AIUsageTracker.zip"

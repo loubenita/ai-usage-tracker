@@ -1,9 +1,9 @@
 # Releases a new version of the app. Run it from the Actions tab: "Release", then "Run workflow".
 #
-# It sets the version in project.yml and App/Info.plist, runs the tests, builds the app signed
-# with the certificate in the SIGNING_CERTIFICATE_P12 secret, commits the version to main, tags
-# it, and publishes a GitHub release with AIUsageTracker.zip. docs/development.md explains the
-# secrets it needs.
+# It sets the version in project.yml and App/Info.plist, runs the tests, and builds the app for
+# Apple silicon and Intel Macs. The app is signed with the certificate in the optional
+# SIGNING_CERTIFICATE_P12 secret, or ad hoc without it. Then it commits the version to main, tags
+# it, and publishes a GitHub release with AIUsageTracker.zip. docs/development.md has the details.
 name: Release
 
 on:
@@ -84,8 +84,11 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
         run: |
           if [ -z "$CERTIFICATE" ]; then
-            echo "::error::Add the SIGNING_CERTIFICATE_P12 and SIGNING_CERTIFICATE_PASSWORD secrets. docs/development.md says how."
-            exit 1
+            # An ad hoc signature needs no certificate, and the app installs on any Mac the same way.
+            echo "::notice::There is no SIGNING_CERTIFICATE_P12 secret, so the app is signed ad hoc. docs/development.md says what a certificate adds."
+            echo "identity=-" >>"$GITHUB_OUTPUT"
+            echo "Signed ad hoc." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           keychain="$RUNNER_TEMP/release.keychain-db"
           keychain_password="$(openssl rand -base64 24)"
@@ -111,6 +114,7 @@ jobs:
           fi
           echo "Signing as $identity"
           echo "identity=$identity" >>"$GITHUB_OUTPUT"
+          echo "Signed by $identity." >>"$GITHUB_STEP_SUMMARY"
 
       - name: Set the version
         run: scripts/set-version.sh "${{ steps.version.outputs.version }}"
@@ -143,17 +147,25 @@ jobs:
           cat >"$RUNNER_TEMP/notes.md" <<'EOF'
           ## Install
 
-          Open the zip, drag `AIUsageTracker.app` into `/Applications`, then right-click it and choose **Open** (twice) the first time. Or, from Terminal:
+          From Terminal:
 
           ```sh
           curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/scripts/install.sh | bash
           ```
 
+          Or download `AIUsageTracker.zip` below, open it, drag `AIUsageTracker.app` into `/Applications`, and run:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/AIUsageTracker.app
+          ```
+
+          The app is not notarized by Apple, so macOS refuses to open a downloaded copy until that download flag is cleared. The install script does it for you. [The README explains why](https://github.com/loubenita/ai-usage-tracker#why-the-xattr-command-is-needed).
+
           To quit it, right-click the strip or a panel and choose **Quit**.
 
           ## Requires
 
-          macOS 26 or later.
+          macOS 26 or later, on an Apple silicon or Intel Mac.
 
           EOF
           echo "SHA-256 of \`AIUsageTracker.zip\`: \`$(shasum -a 256 "$zip" | cut -d ' ' -f 1)\`" >>"$RUNNER_TEMP/notes.md"
