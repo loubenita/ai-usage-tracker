@@ -318,6 +318,7 @@ struct UsagePanelPresenterTests {
             StatModel(label: "Sessions", value: "1"), StatModel(label: "Prompts", value: "3"),
             StatModel(label: "Tool calls", value: "8"),
         ])
+        #expect(kiro.note?.text == "Kiro doesn't share tokens or limits on this Mac, so this shows credits, time and activity.")
     }
 
     @Test func modelsOfAnAgentThatBillsNoCreditsShowNone() throws {

@@ -308,7 +308,9 @@ public struct UsagePanelPresenter: Sendable {
         let missing = [hasTokens ? nil : "tokens", hasCost ? nil : "cost", hasLimits ? nil : "limits"].compactMap { $0 }
         guard !missing.isEmpty, !(agent == .claudeCode && hasTokens) else { return nil }
         let list = missing.count == 1 ? missing[0] : missing.dropLast().joined(separator: ", ") + " or " + missing.last!
-        let shows = hasTokens ? "what it does share" : "time and activity only"
+        // An agent that bills in credits shows them, so the note says so (Kiro).
+        let shows = hasTokens ? "what it does share"
+            : used?.credits != nil ? "credits, time and activity" : "time and activity only"
         return NoteModel(
             title: agent.displayName,
             text: "\(agent.displayName) doesn't share \(list) on this Mac, so this shows \(shows)."
