@@ -30,8 +30,8 @@ public struct TmuxClient: Sendable, Hashable {
     public let session: String
     /// Seconds since 1970, from tmux's `client_activity`.
     public let activity: Double
-    /// The client's process, from tmux's `client_pid`, when tmux says. Its environment tells
-    /// which Warp tab the client was started in.
+    /// The client's process, from tmux's `client_pid`, when tmux says. The processes above it
+    /// tell which terminal app the client runs in (see `TmuxClientHost`).
     public let pid: Int32?
 
     public init(tty: String, session: String, activity: Double = 0, pid: Int32? = nil) {
@@ -42,13 +42,33 @@ public struct TmuxClient: Sendable, Hashable {
     }
 }
 
+/// Where a tmux client really runs: the terminal app that started it, and for Warp the link of
+/// its tab. Read from the client's own process when Open is clicked, since one tmux server can
+/// be shown in several terminals at once.
+public struct TmuxClientHost: Sendable, Hashable {
+    /// The nearest terminal above the client's process. `.tmux` means the client runs inside a
+    /// pane of another tmux session, and `.unknown` that no terminal was found.
+    public let terminal: TerminalApp
+    /// The `warp://session/...` link of the client's Warp tab, only meaningful when `terminal` is
+    /// `.warp`. Warp's variable is copied into everything started from a tab, including a
+    /// Terminal window opened there, so the link is trusted only from a client whose nearest
+    /// terminal is Warp. The plan checks it again (see `WarpFocusLink`).
+    public let warpFocusURL: String?
+
+    public init(terminal: TerminalApp, warpFocusURL: String? = nil) {
+        self.terminal = terminal
+        self.warpFocusURL = warpFocusURL
+    }
+}
+
 /// How the panel's Open button brings a session's terminal to the front. Pure: it only says
 /// what to do, and the app does it, only when Open is clicked. Nothing is ever typed into a
 /// terminal, and no key or mouse event is sent.
 ///
 /// | Where the session runs | What Open does |
 /// |---|---|
-/// | tmux | brings the tmux client's terminal forward, then `switch-client`, `select-window` and `select-pane` to the session's pane. When that client sits inside a pane of another tmux session, it also selects that pane and shows the outer session, outward as far as the clients are nested |
+/// | tmux | brings forward the terminal window or tab the outermost tmux client runs in, then `switch-client`, `select-window` and `select-pane` to the session's pane. When that client sits inside a pane of another tmux session, it also selects that pane and shows the outer session, outward as far as the clients are nested. Which terminal the client runs in is read from the client's own process; the app guessed for tmux is only the fallback |
+/// | tmux shown in Terminal or iTerm | before the tmux steps, selects the window and tab whose TTY is the outermost client's, through the terminal's own scripting, and brings the terminal forward |
 /// | tmux shown in Warp | the same tmux steps, then the `warp://session` link of the Warp tab the outermost client runs in, last, so that tab comes forward already showing the right window; without that link, Warp is only brought forward first |
 /// | Terminal | selects the tab whose TTY is the session's, through Terminal's own scripting, and brings Terminal forward |
 /// | iTerm | selects the existing session, tab and window whose TTY is the session's, through iTerm's own scripting |
@@ -106,16 +126,17 @@ public enum TerminalFocus {
     /// pane too (see `tmuxPlan`).
     ///
     /// A Warp session opens its own tab through its `warp://session` link, which also brings Warp
-    /// forward. For tmux shown in Warp, `focusURLs` holds `WARP_FOCUS_URL` of each client's
-    /// process (by its pid), as the app read it when Open was clicked; the link of the outermost
-    /// client is opened last, after the tmux steps.
+    /// forward. For tmux, `hosts` holds where each client really runs (by its pid), as the app
+    /// read it when Open was clicked: the window or tab of the outermost client is brought
+    /// forward by that client's host, and `origin.hostTerminal`, the one app guessed for every
+    /// tmux session, is only the fallback for a client with no host.
     public static func plan(
         for origin: SessionOrigin, panes: [TmuxPane] = [], clients: [TmuxClient] = [],
-        focusURLs: [Int32: String] = [:]
+        hosts: [Int32: TmuxClientHost] = [:]
     ) -> [TerminalFocusStep] {
         switch origin.terminal {
         case .tmux:
-            return tmuxPlan(origin, panes: panes, clients: clients, focusURLs: focusURLs)
+            return tmuxPlan(origin, panes: panes, clients: clients, hosts: hosts)
         case .terminal:
             guard let tty = safeTTY(origin.tty) else { return activate(.terminal) }
             return [.run(program: "osascript", arguments: ["-e", terminalScript(tty: tty)])] + activate(.terminal)
@@ -179,32 +200,51 @@ public enum TerminalFocus {
     /// client, but the outer session keeps showing whatever window it was on, so the person never
     /// sees it. This repeats outward while the client chosen is again inside a pane.
     ///
-    /// When the session is shown in Warp, the outermost client switched is the one in a real Warp
-    /// tab. Warp is then not just activated first: that tab's link is opened last, after the tmux
-    /// steps, so the tab comes forward already showing the right window.
+    /// The outermost client switched is the one in a real terminal window or tab, and `hosts` says
+    /// which terminal that is, so the right window is brought forward: Terminal and iTerm select
+    /// the tab with the client's TTY before the tmux steps, Warp opens the client's tab link
+    /// last, after them, so the tab comes forward already showing the right window. A client
+    /// with no host, or one inside a tmux pane, gets the app guessed for tmux activated first.
     private static func tmuxPlan(
-        _ origin: SessionOrigin, panes: [TmuxPane], clients: [TmuxClient], focusURLs: [Int32: String]
+        _ origin: SessionOrigin, panes: [TmuxPane], clients: [TmuxClient], hosts: [Int32: TmuxClientHost]
     ) -> [TerminalFocusStep] {
-        let host = origin.hostTerminal.map(activate) ?? []
-        guard let location = location(for: origin, panes: panes).location else { return host }
+        let fallback = origin.hostTerminal.map(activate) ?? []
+        guard let location = location(for: origin, panes: panes).location else { return fallback }
         // Selecting a client that already shows this session lets tmux choose the correct
         // terminal tab. Only when no client shows it do we fall back to the most recent client.
-        guard let client = mostRecent(clients, showing: location.session) else { return host }
+        guard let client = mostRecent(clients, showing: location.session) else { return fallback }
         let outer = outerSteps(startingAt: client, session: location.session, panes: panes, clients: clients)
         let steps = [switchClient(client, to: location.session)] + select(location) + outer.steps
-        guard origin.hostTerminal == .warp,
-              let link = warpLink(ofClient: outer.outermost, panes: panes, focusURLs: focusURLs)
-        else { return host + steps }
-        return steps + [.openURL(link)]
+        let host = outer.outermost.pid.flatMap { hosts[$0] }
+        let (before, after) = bringForward(client: outer.outermost, host: host, fallback: fallback)
+        return before + steps + after
     }
 
-    /// The Warp tab link of a tmux client, only when the client really sits in a Warp tab. A
-    /// client running inside a pane of another tmux session got its environment from that
-    /// session's server, which may have been started in a different tab, so its link is not used.
-    private static func warpLink(ofClient client: TmuxClient, panes: [TmuxPane], focusURLs: [Int32: String]) -> String? {
-        let tty = devicePath(client.tty)
-        guard !panes.contains(where: { devicePath($0.tty) == tty }) else { return nil }
-        return WarpFocusLink.validated(client.pid.flatMap { focusURLs[$0] })
+    /// What brings the window of a tmux client forward, split into what runs before the tmux
+    /// steps and what runs after them. A Warp tab link is opened last; the rest come first.
+    ///
+    /// A Warp link is trusted only when the client's nearest terminal is Warp (the host says so),
+    /// since every process inherits the link of the tab it was started from, and a tmux client
+    /// in Terminal can carry the link of an unrelated Warp tab.
+    private static func bringForward(
+        client: TmuxClient, host: TmuxClientHost?, fallback: [TerminalFocusStep]
+    ) -> (before: [TerminalFocusStep], after: [TerminalFocusStep]) {
+        switch host?.terminal {
+        case .terminal?:
+            guard let tty = safeTTY(client.tty) else { return (activate(.terminal), []) }
+            return ([.run(program: "osascript", arguments: ["-e", terminalScript(tty: tty)])] + activate(.terminal), [])
+        case .iterm?:
+            guard let tty = safeTTY(client.tty) else { return (activate(.iterm), []) }
+            return ([.run(program: "osascript", arguments: ["-e", iTermScript(tty: tty)])] + activate(.iterm), [])
+        case .warp?:
+            guard let link = WarpFocusLink.validated(host?.warpFocusURL) else { return (activate(.warp), []) }
+            return ([], [.openURL(link)])
+        case .ghostty?:
+            return (activate(.ghostty), [])
+        // Inside a tmux pane, no terminal found, or nothing known about the client.
+        case .tmux?, .unknown?, .background?, nil:
+            return (fallback, [])
+        }
     }
 
     /// The steps for each tmux session that shows `client` inside one of its panes, innermost

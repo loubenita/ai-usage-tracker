@@ -3,16 +3,14 @@ import UsageData
 import UsageDomain
 
 /// Does what `TerminalFocus` plans, when the session panel's Open button is clicked, and at no
-/// other time. It asks tmux where the session's pane is, brings the terminal app forward and
-/// moves tmux to the pane, asks Terminal to select the session's tab, or opens the `warp://`
-/// link of a Warp tab. It never types into a terminal and sends no key or mouse event.
+/// other time. It asks tmux where the session's pane is, brings forward the terminal window the
+/// tmux client runs in (found from the client's own process) and moves tmux to the pane, asks
+/// Terminal or iTerm to select the session's tab, or opens the `warp://` link of a Warp tab. It
+/// never types into a terminal and sends no key or mouse event.
 ///
 /// Every step is written to `~/Library/Application Support/AIUsageTracker/open.log` with what
 /// was run, what it printed and how it ended, so a click that does nothing can be read back.
 struct TerminalOpener: SessionOpening {
-    /// Where another process's environment is read from, to find the Warp tab a tmux client runs in.
-    var processes: any ProcessSource = SystemProcessSource()
-
     /// Where these programs live. The app is started by Finder or launchd, not by a shell, so
     /// it has no PATH of its own and each one is found by its full path.
     private static let programPaths: [String: [String]] = [
@@ -46,10 +44,8 @@ struct TerminalOpener: SessionOpening {
             let clients = origin.terminal == .tmux
                 ? TerminalFocus.clients(fromListClients: Self.run("tmux", TerminalFocus.listClientsArguments, log: log).output)
                 : []
-            let focusURLs = origin.terminal == .tmux && origin.hostTerminal == .warp
-                ? warpFocusURLs(of: clients, log: log)
-                : [:]
-            let steps = TerminalFocus.plan(for: origin, panes: panes, clients: clients, focusURLs: focusURLs)
+            let hosts = origin.terminal == .tmux ? Self.hosts(of: clients, log: log) : [:]
+            let steps = TerminalFocus.plan(for: origin, panes: panes, clients: clients, hosts: hosts)
             guard !steps.isEmpty else {
                 log.write("nothing to do: no plan for \(origin.terminal.rawValue)")
                 return
@@ -85,21 +81,28 @@ struct TerminalOpener: SessionOpening {
         }
     }
 
-    /// `WARP_FOCUS_URL` of each client tmux listed, by the client's process, read from that
-    /// process's environment. Only clients tmux listed are read, and only a link of the exact
-    /// shape Warp uses is kept (see `WarpFocusLink`).
-    private func warpFocusURLs(of clients: [TmuxClient], log: OpenLog) -> [Int32: String] {
-        var links: [Int32: String] = [:]
+    /// Where each client tmux listed really runs, by the client's process: the nearest terminal
+    /// app above it, and for Warp the link of its tab (see `TmuxClientHostReader`). Whatever is
+    /// found is logged for each client, so a wrong window can be traced back to its client.
+    private static func hosts(of clients: [TmuxClient], log: OpenLog) -> [Int32: TmuxClientHost] {
+        let hosts = TmuxClientHostReader().hosts(of: clients.compactMap(\.pid))
         for client in clients {
             guard let pid = client.pid else {
                 log.write("client \(client.tty): tmux gave no pid")
                 continue
             }
-            let link = WarpFocusLink.validated(processes.environmentValue(WarpFocusLink.variable, of: pid))
-            log.write("client \(client.tty) pid \(pid): " + (link.map { "warp tab \($0)" } ?? "no Warp tab link"))
-            links[pid] = link
+            log.write("client \(client.tty) pid \(pid): " + describe(hosts[pid]))
         }
-        return links
+        return hosts
+    }
+
+    private static func describe(_ host: TmuxClientHost?) -> String {
+        guard let host, host.terminal != .unknown else { return "no terminal found" }
+        switch host.terminal {
+        case .warp: return host.warpFocusURL.map { "warp tab \($0)" } ?? "warp, no tab link"
+        case .tmux: return "tmux, inside a pane of another session"
+        default: return host.terminal.rawValue
+        }
     }
 
     /// Opens a Warp tab's link, which makes Warp switch to that tab and come forward. The link
