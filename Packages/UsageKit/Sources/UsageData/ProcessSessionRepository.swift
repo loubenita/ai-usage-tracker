@@ -175,9 +175,10 @@ public struct ProcessSessionRepository: UsageRepository {
         let folder: String
         let work: Work
         let agentFiles: AgentFiles
+        let warpFocusURL: String?
         if let cached = liveCache.entry(for: found, now: now, maxAge: filesInterval) {
             // Read a few seconds ago: the same files, claimed again so their stores keep them.
-            (folder, work, agentFiles) = (cached.folder, cached.work, cached.files)
+            (folder, work, agentFiles, warpFocusURL) = (cached.folder, cached.work, cached.files, cached.warpFocusURL)
             live.claim(cached.claimed)
         } else {
             let claude = found.agent == .claudeCode
@@ -205,9 +206,11 @@ public struct ProcessSessionRepository: UsageRepository {
             case .antigravity, .opencode:
                 agentFiles = AgentFiles()
             }
+            warpFocusURL = warpFocusLink(of: found)
             liveCache.store(
                 LiveCache.Entry(
-                    readAt: now, folder: folder, work: work, files: agentFiles, claimed: live.claimed.subtracting(before)
+                    readAt: now, folder: folder, work: work, files: agentFiles, claimed: live.claimed.subtracting(before),
+                    warpFocusURL: warpFocusURL
                 ),
                 for: found
             )
@@ -236,7 +239,8 @@ public struct ProcessSessionRepository: UsageRepository {
                 isHomeFolder: URL(fileURLWithPath: folder).standardizedFileURL.path
                     == URL(fileURLWithPath: homeDirectory).standardizedFileURL.path,
                 tmux: found.terminal == .tmux ? agentFiles.tmux : nil,
-                hostTerminal: found.terminal == .tmux ? tmuxHost : nil
+                hostTerminal: found.terminal == .tmux ? tmuxHost : nil,
+                warpFocusURL: warpFocusURL
             )
         )
         live.events.append(start)
@@ -247,6 +251,14 @@ public struct ProcessSessionRepository: UsageRepository {
                 after: start, state: agentFiles.state ?? .working, snapshot: agentFiles.snapshot, now: now
             ))
         }
+    }
+
+    /// The link of the Warp tab a session runs in, which Warp puts in the environment of every
+    /// process started in that tab. Read for Warp sessions only, and kept only when it has the
+    /// exact shape of a Warp tab link (see `WarpFocusLink`), since it is later opened as a URL.
+    private func warpFocusLink(of found: TerminalAgentProcess) -> String? {
+        guard found.terminal == .warp else { return nil }
+        return WarpFocusLink.validated(source.environmentValue(WarpFocusLink.variable, of: found.process.pid))
     }
 
     /// What the session is doing now. Its duration counts from the process start, so the
@@ -477,6 +489,8 @@ final class LiveCache: Sendable {
         let work: Work
         let files: ProcessSessionRepository.AgentFiles
         let claimed: ClaimedFiles
+        /// The Warp tab link read from the session's environment, when it runs in Warp.
+        let warpFocusURL: String?
     }
 
     private let entries = Mutex<[String: Entry]>([:])

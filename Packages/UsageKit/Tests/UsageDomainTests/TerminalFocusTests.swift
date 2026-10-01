@@ -6,9 +6,12 @@ import Testing
 @Suite("Open brings each kind of terminal to the front")
 struct TerminalFocusTests {
     func origin(
-        _ terminal: TerminalApp, tty: String = "ttys004", tmux: TmuxLocation? = nil, host: TerminalApp? = nil
+        _ terminal: TerminalApp, tty: String = "ttys004", tmux: TmuxLocation? = nil, host: TerminalApp? = nil,
+        warpFocusURL: String? = nil
     ) -> SessionOrigin {
-        SessionOrigin(pid: 1, tty: tty, terminal: terminal, folder: "/", tmux: tmux, hostTerminal: host)
+        SessionOrigin(
+            pid: 1, tty: tty, terminal: terminal, folder: "/", tmux: tmux, hostTerminal: host, warpFocusURL: warpFocusURL
+        )
     }
 
     @Test func tmuxUsesTheClientAlreadyShowingTheTargetSession() {
@@ -74,6 +77,13 @@ struct TerminalFocusTests {
     }
 
     func tmux(_ arguments: String...) -> TerminalFocusStep { .run(program: "tmux", arguments: arguments) }
+
+    func opensALink(_ steps: [TerminalFocusStep]) -> Bool {
+        steps.contains { step in
+            if case .openURL = step { return true }
+            return false
+        }
+    }
 
     // The owner's Mac: the client showing OKIOS-393-Catalogue (ttys011) runs in a pane of
     // agent-streams (window 3), and agent-streams is shown by ttys033, a Warp tab.
@@ -258,11 +268,114 @@ struct TerminalFocusTests {
         #expect(TerminalFocus.safeTTY("console") == nil)
     }
 
-    @Test func warpAndGhosttyAreOnlyBroughtForward() {
-        #expect(TerminalFocus.plan(for: origin(.warp)) == [.activate(bundleID: "dev.warp.Warp-Stable")])
+    @Test func ghosttyIsOnlyBroughtForward() {
         #expect(TerminalFocus.plan(for: origin(.ghostty)) == [.activate(bundleID: "com.mitchellh.ghostty")])
-        #expect(TerminalFocus.action(for: origin(.warp)) == .application(.warp))
         #expect(TerminalFocus.action(for: origin(.ghostty)) == .application(.ghostty))
+        // Ghostty has no tab link, so one that happens to be on the origin changes nothing.
+        let withLink = origin(.ghostty, warpFocusURL: warpLink)
+        #expect(TerminalFocus.plan(for: withLink) == [.activate(bundleID: "com.mitchellh.ghostty")])
+    }
+
+    // MARK: - Warp tabs
+
+    /// A real one: what `WARP_FOCUS_URL` held in a Warp tab on the owner's Mac.
+    let warpLink = "warp://session/68e41dbb3b9145cd8714ffffcae1a24e"
+    let otherWarpLink = "warp://session/0123456789abcdef0123456789abcdef"
+
+    @Test func aWarpSessionOpensItsOwnTabThroughTheLinkWarpGivesIt() {
+        let session = origin(.warp, warpFocusURL: warpLink)
+        // Opening the link makes Warp come forward by itself, so there is nothing to activate.
+        #expect(TerminalFocus.plan(for: session) == [.openURL(warpLink)])
+        // It reaches the session itself, so the button says Open, not Bring forward.
+        #expect(TerminalFocus.action(for: session) == .session)
+        #expect(TerminalFocus.canOpen(session))
+    }
+
+    @Test func aWarpSessionWithoutALinkIsOnlyBroughtForward() {
+        #expect(TerminalFocus.plan(for: origin(.warp)) == [.activate(bundleID: "dev.warp.Warp-Stable")])
+        #expect(TerminalFocus.action(for: origin(.warp)) == .application(.warp))
+        #expect(TerminalFocus.canOpen(origin(.warp)))
+    }
+
+    @Test func aWarpLinkThatIsNotOneIsNeverPlanned() {
+        for bad in ["warp://session/ABC", "warp://session/\(String(repeating: "A", count: 32))", "x\"; rm -rf ~", ""] {
+            let session = origin(.warp, warpFocusURL: bad)
+            #expect(TerminalFocus.plan(for: session) == [.activate(bundleID: "dev.warp.Warp-Stable")])
+            #expect(TerminalFocus.action(for: session) == .application(.warp))
+        }
+    }
+
+    /// The owner's layout from the nested test, with the process of each client as tmux names it.
+    /// ttys033 is the client in the Warp tab; ttys011 runs inside a pane of agent-streams.
+    let nestedClientsWithPids = TerminalFocus.clients(fromListClients: """
+    /dev/ttys033\tagent-streams\t300\t4001
+    /dev/ttys011\tOKIOS-393-Catalogue\t200\t4002
+    /dev/ttys018\tlead\t100\t4003
+    /dev/ttys008\tMSTUD-117-ImageJudge\t150\t4004
+    """)
+
+    @Test func nestedTmuxInWarpBringsTheOutermostClientsTabForwardLast() {
+        let okios = origin(.tmux, tty: "ttys009", tmux: TmuxLocation(session: "OKIOS-393-Catalogue", window: "@1", pane: "%1"), host: .warp)
+        // The links of every client are known; only the outermost switched one (ttys033) counts.
+        let focusURLs: [Int32: String] = [4001: warpLink, 4002: otherWarpLink, 4003: otherWarpLink]
+        #expect(TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClientsWithPids, focusURLs: focusURLs) == [
+            tmux("switch-client", "-c", "/dev/ttys011", "-t", "=OKIOS-393-Catalogue"),
+            tmux("select-window", "-t", "@1"),
+            tmux("select-pane", "-t", "%1"),
+            tmux("select-window", "-t", "@3"),
+            tmux("select-pane", "-t", "%3"),
+            tmux("switch-client", "-c", "/dev/ttys033", "-t", "=agent-streams"),
+            // After the tmux steps, so the tab comes forward already showing the right window.
+            .openURL(warpLink),
+        ])
+    }
+
+    @Test func tmuxInWarpKeepsTheSameStepsWhenNoTabLinkIsKnown() {
+        let okios = origin(.tmux, tty: "ttys009", tmux: TmuxLocation(session: "OKIOS-393-Catalogue", window: "@1", pane: "%1"), host: .warp)
+        let today = TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClients)
+        #expect(today.first == .activate(bundleID: "dev.warp.Warp-Stable"))
+        #expect(!opensALink(today))
+        // No links at all, links for other processes only, and a link that is not a Warp link.
+        #expect(TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClientsWithPids) == today)
+        #expect(TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClientsWithPids, focusURLs: [9999: warpLink]) == today)
+        #expect(TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClientsWithPids, focusURLs: [4001: "warp://session/xyz"]) == today)
+        // Clients that tmux gave no pid for cannot be looked up.
+        #expect(TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClients, focusURLs: [4001: warpLink]) == today)
+    }
+
+    @Test func tmuxInWarpWithoutNestingOpensThatClientsTab() {
+        // The client showing lead (ttys018) is a Warp tab itself: no pane has its tty.
+        let lead = origin(.tmux, tty: "ttys000", tmux: TmuxLocation(session: "lead", window: "@0", pane: "%0"), host: .warp)
+        #expect(TerminalFocus.plan(for: lead, panes: nestedPanes, clients: nestedClientsWithPids, focusURLs: [4003: warpLink]) == [
+            tmux("switch-client", "-c", "/dev/ttys018", "-t", "=lead"),
+            tmux("select-window", "-t", "@0"),
+            tmux("select-pane", "-t", "%0"),
+            .openURL(warpLink),
+        ])
+    }
+
+    @Test func aClientInsideAnotherTmuxPaneIsNotTakenForAWarpTab() {
+        // Nothing shows agent-streams, so the walk ends at ttys011, a client inside a pane. Its
+        // environment came from the server of the outer session, not from a tab it sits in.
+        let clients = [TmuxClient(tty: "/dev/ttys011", session: "OKIOS-393-Catalogue", activity: 200, pid: 4002)]
+        let okios = origin(.tmux, tty: "ttys009", tmux: TmuxLocation(session: "OKIOS-393-Catalogue", window: "@1", pane: "%1"), host: .warp)
+        let plan = TerminalFocus.plan(for: okios, panes: nestedPanes, clients: clients, focusURLs: [4002: warpLink])
+        #expect(plan == TerminalFocus.plan(for: okios, panes: nestedPanes, clients: clients))
+        #expect(plan.first == .activate(bundleID: "dev.warp.Warp-Stable"))
+    }
+
+    @Test func tmuxInAnotherTerminalNeverOpensAWarpLink() {
+        let lead = origin(.tmux, tty: "ttys000", tmux: TmuxLocation(session: "lead", window: "@0", pane: "%0"), host: .terminal)
+        let plan = TerminalFocus.plan(for: lead, panes: nestedPanes, clients: nestedClientsWithPids, focusURLs: [4003: warpLink])
+        #expect(plan.first == .activate(bundleID: "com.apple.Terminal"))
+        #expect(plan.count == 4)
+    }
+
+    @Test func theClientsSwitchedAreListedInnermostFirst() {
+        let okios = origin(.tmux, tty: "ttys009", tmux: TmuxLocation(session: "OKIOS-393-Catalogue", window: "@1", pane: "%1"), host: .warp)
+        let steps = TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClientsWithPids, focusURLs: [4001: warpLink])
+        #expect(TerminalFocus.switchedClients(in: steps) == ["/dev/ttys011", "/dev/ttys033"])
+        #expect(TerminalFocus.switchedClients(in: [.activate(bundleID: "x"), .openURL(warpLink)]).isEmpty)
     }
 
     @Test func anUnknownTerminalHasNoOpenButton() {
@@ -287,5 +400,17 @@ struct TerminalFocusTests {
         // An older tmux, which does not say when a client was last used.
         #expect(TerminalFocus.clients(fromListClients: "/dev/ttys009\tlead") == [TmuxClient(tty: "/dev/ttys009", session: "lead")])
         #expect(TerminalFocus.panes(fromListPanes: "garbage\n").isEmpty)
+    }
+
+    @Test func tmuxsClientListNowAsksForEachClientsProcess() {
+        #expect(TerminalFocus.listClientsArguments.last?.hasSuffix("#{client_pid}") == true)
+        #expect(TerminalFocus.clients(fromListClients: "/dev/ttys009\tlead\t1790102753\t4242")
+            == [TmuxClient(tty: "/dev/ttys009", session: "lead", activity: 1_790_102_753, pid: 4242)])
+        // A pid tmux left empty, or one that is not a number, is simply not known.
+        #expect(TerminalFocus.clients(fromListClients: "/dev/ttys009\tlead\t5\t")
+            == [TmuxClient(tty: "/dev/ttys009", session: "lead", activity: 5)])
+        #expect(TerminalFocus.clients(fromListClients: "/dev/ttys009\tlead\t5\tabc").first?.pid == nil)
+        // A line from before the pid was asked for still reads.
+        #expect(TerminalFocus.clients(fromListClients: "/dev/ttys009\tlead\t5").first?.pid == nil)
     }
 }

@@ -442,4 +442,87 @@ struct ProcessSessionRepositoryTests {
         #expect(mine.summary.activeDuration == 30 * 60)
         #expect(mine.summary.origin?.pid == 35056)
     }
+
+    // MARK: - Warp tab links
+
+    let tabLink = "warp://session/68e41dbb3b9145cd8714ffffcae1a24e"
+    let otherTabLink = "warp://session/0123456789abcdef0123456789abcdef"
+
+    /// Gives a Warp tab's `WARP_FOCUS_URL` to the processes it is told about, and remembers which
+    /// processes were asked.
+    final class TabLinkSource: ProcessSource {
+        let text: String
+        let links: [Int32: String]
+        let asked = Mutex<[Int32]>([])
+        init(_ text: String, links: [Int32: String]) {
+            self.text = text
+            self.links = links
+        }
+        func processList() throws -> String { text }
+        func workingDirectory(of pid: Int32) -> String? { nil }
+        func environmentValue(_ name: String, of pid: Int32) -> String? {
+            asked.withLock { $0.append(pid) }
+            return name == "WARP_FOCUS_URL" ? links[pid] : nil
+        }
+    }
+
+    @Test func aWarpSessionCarriesTheLinkOfItsTab() async throws {
+        // 3857 and 45226 run in Warp tabs, 35056 in tmux. The tmux one is given a link too, to
+        // show that only Warp sessions are looked up.
+        let source = TabLinkSource(
+            try Fixture.text("ps-2026-09-21.txt"), links: [3857: tabLink, 45226: otherTabLink, 35056: tabLink]
+        )
+        let repository = ProcessSessionRepository(source: source, claudeDirectory: "/nonexistent", timeZone: Fixture.london)
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        func origin(_ pid: Int32) -> SessionOrigin? { records.sessionEvents.first { $0.origin?.pid == pid }?.origin }
+        #expect(origin(3857)?.terminal == .warp)
+        #expect(origin(3857)?.warpFocusURL == tabLink)
+        #expect(origin(45226)?.warpFocusURL == otherTabLink)
+        // In Warp, but that process had no link.
+        #expect(origin(48718)?.terminal == .warp)
+        #expect(origin(48718)?.warpFocusURL == nil)
+        #expect(origin(35056)?.terminal == .tmux)
+        #expect(origin(35056)?.warpFocusURL == nil)
+        #expect(!source.asked.withLock { $0 }.contains(35056))
+    }
+
+    @Test func aLinkThatIsNotAWarpTabLinkIsDropped() async throws {
+        let id = "68e41dbb3b9145cd8714ffffcae1a24e"
+        let source = TabLinkSource(try Fixture.text("ps-2026-09-21.txt"), links: [
+            3857: "warp://session/" + id.uppercased(),
+            45226: "warp://session/\(id)\"; open -a Calculator",
+            48718: "https://example.com/session/" + id,
+            84087: "warp://session/" + id + "?x=1",
+        ])
+        let repository = ProcessSessionRepository(source: source, claudeDirectory: "/nonexistent", timeZone: Fixture.london)
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        for pid: Int32 in [3857, 45226, 48718, 84087] {
+            let found = records.sessionEvents.first { $0.origin?.pid == pid }?.origin
+            #expect(found?.terminal == .warp)
+            #expect(found?.warpFocusURL == nil, "kept the value of \(pid)")
+        }
+    }
+
+    @Test func aTabLinkIsReadWithTheSessionsFilesNotOnEveryRefresh() async throws {
+        let source = TabLinkSource(try Fixture.text("ps-2026-09-21.txt"), links: [3857: tabLink])
+        let repository = ProcessSessionRepository(source: source, claudeDirectory: "/nonexistent", timeZone: Fixture.london)
+        let first = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        let warpPIDs = Set(first.sessionEvents.compactMap(\.origin).filter { $0.terminal == .warp }.map(\.pid))
+        #expect(warpPIDs.contains(3857))
+        #expect(Set(source.asked.withLock { $0 }) == warpPIDs)
+        #expect(source.asked.withLock { $0 }.count == warpPIDs.count)
+        // A couple of seconds later the link comes from what was read, and is still on the origin.
+        let second = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        #expect(source.asked.withLock { $0 }.count == warpPIDs.count)
+        #expect(second.sessionEvents.first { $0.origin?.pid == 3857 }?.origin?.warpFocusURL == tabLink)
+    }
+
+    @Test func aSourceThatCannotReadEnvironmentsLeavesTheLinkOut() async throws {
+        let repository = ProcessSessionRepository(
+            source: RecordedSource(text: try Fixture.text("ps-2026-09-21.txt")),
+            claudeDirectory: "/nonexistent", timeZone: Fixture.london
+        )
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        #expect(records.sessionEvents.compactMap(\.origin).allSatisfy { $0.warpFocusURL == nil })
+    }
 }

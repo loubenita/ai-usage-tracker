@@ -1,14 +1,18 @@
 import AppKit
+import UsageData
 import UsageDomain
 
 /// Does what `TerminalFocus` plans, when the session panel's Open button is clicked, and at no
 /// other time. It asks tmux where the session's pane is, brings the terminal app forward and
-/// moves tmux to the pane, or asks Terminal to select the session's tab. It never types into a
-/// terminal and sends no key or mouse event.
+/// moves tmux to the pane, asks Terminal to select the session's tab, or opens the `warp://`
+/// link of a Warp tab. It never types into a terminal and sends no key or mouse event.
 ///
 /// Every step is written to `~/Library/Application Support/AIUsageTracker/open.log` with what
 /// was run, what it printed and how it ended, so a click that does nothing can be read back.
 struct TerminalOpener: SessionOpening {
+    /// Where another process's environment is read from, to find the Warp tab a tmux client runs in.
+    var processes: any ProcessSource = SystemProcessSource()
+
     /// Where these programs live. The app is started by Finder or launchd, not by a shell, so
     /// it has no PATH of its own and each one is found by its full path.
     private static let programPaths: [String: [String]] = [
@@ -20,7 +24,8 @@ struct TerminalOpener: SessionOpening {
         let log = OpenLog()
         log.write("open \(origin.terminal.rawValue) pid \(origin.pid) tty \(origin.tty)"
             + (origin.tmux.map { " tmux \($0.session):\($0.window ?? "?").\($0.pane ?? "?")" } ?? "")
-            + (origin.hostTerminal.map { " in \($0.rawValue)" } ?? ""))
+            + (origin.hostTerminal.map { " in \($0.rawValue)" } ?? "")
+            + (origin.warpFocusURL.map { " warp tab \($0)" } ?? ""))
         DispatchQueue.global(qos: .userInitiated).async {
             // Always ask tmux which panes it has: the ids the agent recorded go stale when a
             // pane is closed, and then the session is found by its TTY instead.
@@ -41,7 +46,10 @@ struct TerminalOpener: SessionOpening {
             let clients = origin.terminal == .tmux
                 ? TerminalFocus.clients(fromListClients: Self.run("tmux", TerminalFocus.listClientsArguments, log: log).output)
                 : []
-            let steps = TerminalFocus.plan(for: origin, panes: panes, clients: clients)
+            let focusURLs = origin.terminal == .tmux && origin.hostTerminal == .warp
+                ? warpFocusURLs(of: clients, log: log)
+                : [:]
+            let steps = TerminalFocus.plan(for: origin, panes: panes, clients: clients, focusURLs: focusURLs)
             guard !steps.isEmpty else {
                 log.write("nothing to do: no plan for \(origin.terminal.rawValue)")
                 return
@@ -52,22 +60,56 @@ struct TerminalOpener: SessionOpening {
                     DispatchQueue.main.sync { Self.activate(bundleID, log: log) }
                 case .run(let program, let arguments):
                     _ = Self.run(program, arguments, log: log)
+                case .openURL(let link):
+                    DispatchQueue.main.sync { Self.openWarpTab(link, log: log) }
                 }
             }
-            // What that client is looking at afterwards, so the log shows whether the switch
-            // really happened. Without naming the client, tmux answers for another one.
+            // What each client that was switched is looking at afterwards, so the log shows
+            // whether the switch really happened. Without naming the client, tmux answers for
+            // another one. With sessions shown inside each other the last one is the outermost
+            // client, the one in the terminal tab.
             if origin.terminal == .tmux {
                 let location = TerminalFocus.location(for: origin, panes: panes).location
                 guard let session = location?.session else { return }
-                guard let client = TerminalFocus.mostRecent(clients, showing: session) else {
+                let switched = TerminalFocus.switchedClients(in: steps)
+                guard !switched.isEmpty else {
                     log.write("tmux: no attached client can show \(session)")
                     return
                 }
-                let arguments = ["display-message", "-p", "-c", client.tty, "#S:#I.#P"]
-                let now = Self.run("tmux", arguments, log: log).output.trimmingCharacters(in: .whitespacesAndNewlines)
-                log.write("\(client.tty) is now on \(now)")
+                for tty in switched {
+                    let arguments = ["display-message", "-p", "-c", tty, "#S:#I.#P"]
+                    let now = Self.run("tmux", arguments, log: log).output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    log.write("\(tty) is now on \(now)")
+                }
             }
         }
+    }
+
+    /// `WARP_FOCUS_URL` of each client tmux listed, by the client's process, read from that
+    /// process's environment. Only clients tmux listed are read, and only a link of the exact
+    /// shape Warp uses is kept (see `WarpFocusLink`).
+    private func warpFocusURLs(of clients: [TmuxClient], log: OpenLog) -> [Int32: String] {
+        var links: [Int32: String] = [:]
+        for client in clients {
+            guard let pid = client.pid else {
+                log.write("client \(client.tty): tmux gave no pid")
+                continue
+            }
+            let link = WarpFocusLink.validated(processes.environmentValue(WarpFocusLink.variable, of: pid))
+            log.write("client \(client.tty) pid \(pid): " + (link.map { "warp tab \($0)" } ?? "no Warp tab link"))
+            links[pid] = link
+        }
+        return links
+    }
+
+    /// Opens a Warp tab's link, which makes Warp switch to that tab and come forward. The link
+    /// is checked again here, since it is opened as a URL.
+    private static func openWarpTab(_ link: String, log: OpenLog) {
+        guard let valid = WarpFocusLink.validated(link), let url = URL(string: valid) else {
+            log.write("open \(link) → refused: not a Warp tab link")
+            return
+        }
+        log.write("open \(valid) → " + (NSWorkspace.shared.open(url) ? "ok" : "failed"))
     }
 
     private static func activate(_ bundleID: String, log: OpenLog) {

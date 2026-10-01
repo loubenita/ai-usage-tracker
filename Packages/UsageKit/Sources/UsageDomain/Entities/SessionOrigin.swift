@@ -68,6 +68,9 @@ public struct SessionOrigin: Sendable, Hashable {
     public let tmux: TmuxLocation?
     /// For a session inside tmux, the terminal app its tmux client shows in, such as Warp.
     public let hostTerminal: TerminalApp?
+    /// For a session in a Warp tab, the `warp://session/...` link Warp gives that tab, which
+    /// opens exactly that tab. Only a link `WarpFocusLink` accepts is kept.
+    public let warpFocusURL: String?
 
     public init(
         pid: Int32,
@@ -81,10 +84,12 @@ public struct SessionOrigin: Sendable, Hashable {
         accountID: String? = nil,
         isHomeFolder: Bool = false,
         tmux: TmuxLocation? = nil,
-        hostTerminal: TerminalApp? = nil
+        hostTerminal: TerminalApp? = nil,
+        warpFocusURL: String? = nil
     ) {
         self.tmux = tmux
         self.hostTerminal = hostTerminal
+        self.warpFocusURL = warpFocusURL
         self.pid = pid
         self.tty = tty
         self.terminal = terminal
