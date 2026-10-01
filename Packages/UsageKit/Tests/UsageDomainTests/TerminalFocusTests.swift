@@ -73,6 +73,103 @@ struct TerminalFocusTests {
         #expect(TerminalFocus.plan(for: codex, panes: panes) == [.activate(bundleID: "com.apple.Terminal")])
     }
 
+    func tmux(_ arguments: String...) -> TerminalFocusStep { .run(program: "tmux", arguments: arguments) }
+
+    // The owner's Mac: the client showing OKIOS-393-Catalogue (ttys011) runs in a pane of
+    // agent-streams (window 3), and agent-streams is shown by ttys033, a Warp tab.
+    let nestedPanes = TerminalFocus.panes(fromListPanes: """
+    /dev/ttys009\tOKIOS-393-Catalogue\t@1\t%1
+    /dev/ttys008\tagent-streams\t@2\t%2
+    /dev/ttys011\tagent-streams\t@3\t%3
+    /dev/ttys000\tlead\t@0\t%0
+    """)
+    let nestedClients = TerminalFocus.clients(fromListClients: """
+    /dev/ttys033\tagent-streams\t300
+    /dev/ttys011\tOKIOS-393-Catalogue\t200
+    /dev/ttys018\tlead\t100
+    /dev/ttys008\tMSTUD-117-ImageJudge\t150
+    """)
+
+    @Test func aSessionShownInsideAnotherTmuxSessionSelectsTheOuterPaneToo() {
+        let okios = origin(.tmux, tty: "ttys009", tmux: TmuxLocation(session: "OKIOS-393-Catalogue", window: "@1", pane: "%1"), host: .warp)
+        #expect(TerminalFocus.plan(for: okios, panes: nestedPanes, clients: nestedClients) == [
+            .activate(bundleID: "dev.warp.Warp-Stable"),
+            tmux("switch-client", "-c", "/dev/ttys011", "-t", "=OKIOS-393-Catalogue"),
+            tmux("select-window", "-t", "@1"),
+            tmux("select-pane", "-t", "%1"),
+            // ttys011 is the pane agent-streams:3, so agent-streams is moved to that window...
+            tmux("select-window", "-t", "@3"),
+            tmux("select-pane", "-t", "%3"),
+            // ...and shown by the client that is in the Warp tab.
+            tmux("switch-client", "-c", "/dev/ttys033", "-t", "=agent-streams"),
+        ])
+    }
+
+    @Test func aSessionNotShownInsideAnotherTmuxSessionKeepsTheSameSteps() {
+        // The client showing lead (ttys018) is a Warp tab: no pane has its tty.
+        let lead = origin(.tmux, tty: "ttys000", tmux: TmuxLocation(session: "lead", window: "@0", pane: "%0"), host: .warp)
+        #expect(TerminalFocus.plan(for: lead, panes: nestedPanes, clients: nestedClients) == [
+            .activate(bundleID: "dev.warp.Warp-Stable"),
+            tmux("switch-client", "-c", "/dev/ttys018", "-t", "=lead"),
+            tmux("select-window", "-t", "@0"),
+            tmux("select-pane", "-t", "%0"),
+        ])
+    }
+
+    @Test func twoSessionsShownInsideEachOtherAreWalkedOnlyOnce() {
+        // alpha's client runs in a pane of beta, and beta's client runs in a pane of alpha.
+        let panes = TerminalFocus.panes(fromListPanes: """
+        /dev/ttys001\talpha\t@1\t%1
+        /dev/ttys002\tbeta\t@2\t%2
+        /dev/ttys005\talpha\t@5\t%5
+        """)
+        let clients = [
+            TmuxClient(tty: "/dev/ttys002", session: "alpha", activity: 10),
+            TmuxClient(tty: "/dev/ttys001", session: "beta", activity: 20),
+        ]
+        let agent = origin(.tmux, tty: "ttys005", tmux: TmuxLocation(session: "alpha", window: "@5", pane: "%5"), host: .warp)
+        #expect(TerminalFocus.plan(for: agent, panes: panes, clients: clients) == [
+            .activate(bundleID: "dev.warp.Warp-Stable"),
+            tmux("switch-client", "-c", "/dev/ttys002", "-t", "=alpha"),
+            tmux("select-window", "-t", "@5"),
+            tmux("select-pane", "-t", "%5"),
+            tmux("select-window", "-t", "@2"),
+            tmux("select-pane", "-t", "%2"),
+            tmux("switch-client", "-c", "/dev/ttys001", "-t", "=beta"),
+            // The next client is in a pane of alpha, which is done already: the walk ends.
+        ])
+    }
+
+    @Test func anOuterSessionWithNoClientStopsAfterItsPaneIsSelected() {
+        let clients = [TmuxClient(tty: "/dev/ttys011", session: "OKIOS-393-Catalogue", activity: 200)]
+        let okios = origin(.tmux, tty: "ttys009", tmux: TmuxLocation(session: "OKIOS-393-Catalogue", window: "@1", pane: "%1"), host: .warp)
+        // Nothing shows agent-streams, so only the pane is selected. The only client there is
+        // must not be switched to agent-streams, which it runs inside.
+        #expect(TerminalFocus.plan(for: okios, panes: nestedPanes, clients: clients) == [
+            .activate(bundleID: "dev.warp.Warp-Stable"),
+            tmux("switch-client", "-c", "/dev/ttys011", "-t", "=OKIOS-393-Catalogue"),
+            tmux("select-window", "-t", "@1"),
+            tmux("select-pane", "-t", "%1"),
+            tmux("select-window", "-t", "@3"),
+            tmux("select-pane", "-t", "%3"),
+        ])
+    }
+
+    @Test func aLongChainOfNestedSessionsIsFollowedForFourLevelsOnly() {
+        // s0 is shown inside s1, which is shown inside s2, and so on up to s6 in a Warp tab.
+        let panes = (1...6).map { level in
+            TmuxPane(tty: "/dev/ttys10\(level - 1)", location: TmuxLocation(session: "s\(level)", window: "@\(level)", pane: "%\(level)"))
+        } + [TmuxPane(tty: "/dev/ttys200", location: TmuxLocation(session: "s0", window: "@0", pane: "%0"))]
+        let clients = (0...6).map { TmuxClient(tty: "/dev/ttys10\($0)", session: "s\($0)", activity: Double($0)) }
+        let agent = origin(.tmux, tty: "ttys200", tmux: TmuxLocation(session: "s0", window: "@0", pane: "%0"))
+        let switches = TerminalFocus.plan(for: agent, panes: panes, clients: clients).filter {
+            if case .run(_, let arguments) = $0 { return arguments.first == "switch-client" }
+            return false
+        }
+        // The session itself, then four outer sessions: s1 to s4. s5 is not reached.
+        #expect(switches == (0...4).map { tmux("switch-client", "-c", "/dev/ttys10\($0)", "-t", "=s\($0)") })
+    }
+
     @Test func aRecordedPaneThatIsStillThereIsUsed() {
         let lead = origin(.tmux, tty: "ttys004", tmux: TmuxLocation(session: "lead", window: "@24", pane: "%24"), host: .warp)
         let panes = TerminalFocus.panes(fromListPanes: """

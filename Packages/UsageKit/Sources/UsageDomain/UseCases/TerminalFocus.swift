@@ -40,7 +40,7 @@ public struct TmuxClient: Sendable, Hashable {
 ///
 /// | Where the session runs | What Open does |
 /// |---|---|
-/// | tmux | brings the tmux client's terminal forward, then `switch-client`, `select-window` and `select-pane` to the session's pane |
+/// | tmux | brings the tmux client's terminal forward, then `switch-client`, `select-window` and `select-pane` to the session's pane. When that client sits inside a pane of another tmux session, it also selects that pane and shows the outer session, outward as far as the clients are nested |
 /// | Terminal | selects the tab whose TTY is the session's, through Terminal's own scripting, and brings Terminal forward |
 /// | iTerm | selects the existing session, tab and window whose TTY is the session's, through iTerm's own scripting |
 /// | Warp, Ghostty | brings the app forward; their tabs cannot be chosen exactly from outside |
@@ -85,7 +85,9 @@ public enum TerminalFocus {
     /// The steps for a session. For tmux, `panes` and `clients` are what tmux reported when Open
     /// was clicked: a pane found by the session's TTY stands in when its location is not known.
     /// A client already showing that session is selected first; the most recently used client is
-    /// only a fallback when the session is not currently displayed anywhere.
+    /// only a fallback when the session is not currently displayed anywhere. When that client is
+    /// itself running inside a pane of another tmux session, the outer session is brought to that
+    /// pane too (see `tmuxPlan`).
     public static func plan(
         for origin: SessionOrigin, panes: [TmuxPane] = [], clients: [TmuxClient] = []
     ) -> [TerminalFocusStep] {
@@ -131,16 +133,55 @@ public enum TerminalFocus {
         return byTTY == nil ? (nil, .none) : (byTTY, .byTTY)
     }
 
+    /// How many outer tmux sessions are followed when a client sits inside a pane of another
+    /// session. Real setups nest once or twice; the limit only keeps an odd layout from looping on.
+    private static let maxNestingLevels = 4
+
+    /// Brings the session's pane to a client, then, when that client is itself running inside a
+    /// pane of another tmux session on the same server, selects that outer pane and shows the
+    /// outer session on a client of its own. Without this the session is selected inside the inner
+    /// client, but the outer session keeps showing whatever window it was on, so the person never
+    /// sees it. This repeats outward while the client chosen is again inside a pane.
     private static func tmuxPlan(_ origin: SessionOrigin, panes: [TmuxPane], clients: [TmuxClient]) -> [TerminalFocusStep] {
         let host = origin.hostTerminal.map(activate) ?? []
         guard let location = location(for: origin, panes: panes).location else { return host }
         // Selecting a client that already shows this session lets tmux choose the correct
         // terminal tab. Only when no client shows it do we fall back to the most recent client.
         guard let client = mostRecent(clients, showing: location.session) else { return host }
-        var switchClient = ["switch-client", "-c", client.tty]
+        let steps = host + [switchClient(client, to: location.session)] + select(location)
+        return steps + outerSteps(startingAt: client, session: location.session, panes: panes, clients: clients)
+    }
+
+    /// The steps for each tmux session that shows `client` inside one of its panes, innermost
+    /// first. A session already visited ends the walk, so two sessions shown inside each other
+    /// cannot loop, and so does a session no client is showing: only a client that shows the outer
+    /// session can bring it forward, and the fallback to any client would switch the inner one.
+    private static func outerSteps(
+        startingAt client: TmuxClient, session: String, panes: [TmuxPane], clients: [TmuxClient]
+    ) -> [TerminalFocusStep] {
+        var steps: [TerminalFocusStep] = []
+        var visited: Set<String> = [session]
+        var current = client
+        for _ in 0..<maxNestingLevels {
+            let tty = devicePath(current.tty)
+            guard let hostPane = panes.first(where: { devicePath($0.tty) == tty }),
+                  visited.insert(hostPane.location.session).inserted else { break }
+            steps += select(hostPane.location)
+            guard let outer = mostRecent(clients.filter { $0.session == hostPane.location.session }) else { break }
+            steps.append(switchClient(outer, to: hostPane.location.session))
+            current = outer
+        }
+        return steps
+    }
+
+    private static func switchClient(_ client: TmuxClient, to session: String) -> TerminalFocusStep {
         // "=" asks for the session with exactly this name, not one that starts with it.
-        switchClient += ["-t", "=" + location.session]
-        var steps = host + [TerminalFocusStep.run(program: "tmux", arguments: switchClient)]
+        .run(program: "tmux", arguments: ["switch-client", "-c", client.tty, "-t", "=" + session])
+    }
+
+    /// `select-window` and `select-pane` for the ids a location has.
+    private static func select(_ location: TmuxLocation) -> [TerminalFocusStep] {
+        var steps: [TerminalFocusStep] = []
         if let window = location.window { steps.append(.run(program: "tmux", arguments: ["select-window", "-t", window])) }
         if let pane = location.pane { steps.append(.run(program: "tmux", arguments: ["select-pane", "-t", pane])) }
         return steps
