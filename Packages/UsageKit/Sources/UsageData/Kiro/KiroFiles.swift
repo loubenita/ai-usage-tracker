@@ -30,11 +30,23 @@ final class KiroFiles: Sendable {
 
     /// The session of a `kiro-cli` process started at `startedAt` in `folder`: the one in that
     /// folder changed most recently since the process started.
+    ///
+    /// `ps` gives the start only to the second, so a file changed up to five seconds before it
+    /// still counts. Going further back would let the previous session in the same folder be
+    /// taken for this one.
     func session(startedAt: Date, folder: String, excluding taken: Set<String>)
         -> (path: String, modified: Date, session: KiroSession)?
     {
-        sessions(changedSince: startedAt.addingTimeInterval(-5))
-            .filter { !taken.contains($0.path) && $0.session.folder == folder }
+        let wanted = Self.normalised(folder)
+        return sessions(changedSince: startedAt.addingTimeInterval(-5))
+            .filter { !taken.contains($0.path) && $0.session.folder.map(Self.normalised) == wanted }
             .max { $0.modified < $1.modified }
+    }
+
+    /// A folder written so that the same place always reads the same: without a trailing slash
+    /// or `.` and `..`, and with symlinks followed. `/Users/me/app/` and a link to `/Users/me/app`
+    /// are both `/Users/me/app`.
+    static func normalised(_ folder: String) -> String {
+        URL(fileURLWithPath: folder).standardizedFileURL.resolvingSymlinksInPath().path
     }
 }
