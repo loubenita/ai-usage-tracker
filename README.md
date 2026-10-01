@@ -82,12 +82,12 @@ Until then Usage explains how to turn on Claude limits and leaves out empty limi
 | | Claude Code | Codex | Cursor Agent | Kiro CLI | Antigravity |
 |---|---|---|---|---|---|
 | Ring colour | The text colour | Light grey | Blue | Violet | Unavailable today |
-| Context and tokens | Yes | Yes | Context only: Cursor keeps no token count | Yes, except its Auto agent | No: its conversations are encrypted |
+| Context and tokens | Yes | Yes | Context only: Cursor keeps no token count | Context only: current Kiro builds write every token count as 0 | No: its conversations are encrypted |
 | Cost | Yes, at API list prices | No prices available | Billed by plan | Billed in credits | No |
 | Plan limits | 5-hour and weekly, [with the status line](#claudes-limits) | 5-hour and weekly when present in its own files | No | This month's credits, by asking `kiro-cli` | No |
 | Counted in Today, Week and Month | Yes, sub-agents included | Yes | No history; live context and prompts only | Yes, in credits | No |
 
-Antigravity runs as a desktop app rather than in a terminal and encrypts what it saves, so it cannot be tracked. Kiro's reader is written from other tools' descriptions of Kiro and has not been tried on a real Kiro session.
+Antigravity runs as a desktop app rather than in a terminal and encrypts what it saves, so it cannot be tracked. Kiro's session fields were checked against a file from a real Kiro install. Its plan output, read by asking `kiro-cli`, has not been checked against a live run.
 
 ## More
 

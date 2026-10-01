@@ -20,7 +20,7 @@ This is the source-backed list of what AI Usage Tracker can read, calculate, or 
 | Claude Code | Tokens, context, USD estimate, activity, state, sub-agents | Main and sub-agent transcripts | Per-profile 5-hour/week via status-line log | Implemented and observed |
 | Codex | Tokens, context, model, effort, activity, state | Main and sub-agent rollouts | 5-hour/week when rollout supplies them; no account ID | Implemented and observed |
 | Cursor Agent | Current context, model, prompt count | None | None | Database reader implemented and observed |
-| Kiro CLI | Tokens when present, context, model, credits | Session JSON files | Monthly plan from `kiro-cli /usage`; no account ID | Implemented, unverified |
+| Kiro CLI | Credits, per-request model, tool calls, context; tokens unknown (written as 0) | Session JSON files | Monthly plan from `kiro-cli /usage`; no account ID | Session files observed; plan output unverified |
 | Antigravity | None | None | None | Unavailable |
 | OpenCode | Terminal, folder, project and branch only | None | None | Process detection only |
 
@@ -95,15 +95,17 @@ Sources: `UsageData/Kiro/KiroSession.swift`, `KiroPlanReader.swift` and `KiroUsa
 
 | Field group | Available facts | Status | Caveat |
 |---|---|---|---|
-| Identity/location | Session ID, folder/project, TTY/terminal | Implemented, unverified | Based on tokscale's Kiro JSON reader. Branch is derived from folder. |
-| Model/context | Model, window and latest context percentage as tokens | Implemented, unverified | Missing window becomes 200,000, an app fallback. |
-| Tokens/credits | Input/output/cache read/cache write; per-request/session credits; daily/month credits | Implemented, unverified | Auto zero token counts become unknown. Credits are not USD. |
+| Identity/location | Session ID, folder/project, TTY/terminal | Implemented and observed | Field names checked against a real install's session file. A running `kiro-cli` is matched to its file by folder and by file changes since the process started, with five seconds of margin. The folders are compared after settling a trailing slash, `.`/`..` and symlinks. Branch is derived from folder. |
+| Model/context | Per-request model, session model, window, and each request's context percentage as tokens | Implemented and observed | Each request names its own model (`auto`, `claude-opus-4.8`); the session's model is the fallback, then `auto`. The window is `model_info.context_window_tokens` (1,000,000 on current builds); 200,000 applies only when the file leaves it out. Context is current occupancy: shown as `ctx ~126k`, an estimate, and never added into a token total. |
+| Tokens | Input/output/cache read/cache write | Unavailable on current builds | Current builds write every count as 0. Zero counts become unknown, so period tokens are unavailable, not 0. If Kiro filled them in, real tokens would work with no estimate. |
+| Credits | Per-request credits from `metering_usage` entries of unit `credit`; per-session, per-model, daily and month totals | Implemented and observed | Credits are Kiro's real signal. Credits are not USD. The Usage model rows share by credits when no model has tokens. |
+| Tool calls and duration | `builtin_tool_uses` and `turn_duration` per request | Implemented and observed | Tool calls are totalled per period. Duration is kept on each turn and not shown yet. Reply and prompt lengths in characters are read and not used. |
 | State | File freshness | Derivable | Same 30-second rule as Cursor. |
-| Plan | Name, credits used/allowance when printed, percentage, reset and credits left/day | Implemented, unverified | App runs `kiro-cli chat --no-interactive /usage` at most every five minutes outside the project, times out at 20 seconds and keeps last success. Reset exists only if printed. |
-| USD, task, tools/files, sub-agents and account | None | Unavailable | No source reader. |
+| Plan | Name, credits used/allowance when printed, percentage, reset and credits left/day | Implemented, unverified | App runs `kiro-cli chat --no-interactive /usage` at most every five minutes outside the project, times out at 20 seconds and keeps last success. Reset exists only if printed. That process has no terminal and runs in the folder `AIUsageTracker-kiro`; it is never listed as a session. |
+| USD, task, changed files, sub-agents and account | None | Unavailable | No source reader. |
 | Older Kiro SQLite database | None | Unavailable | `~/Library/Application Support/kiro-cli/data.sqlite3` is explicitly not read. |
 
-The source comments state Kiro was not installed when this reader was written. Its tests prove assumed shapes, not compatibility with current real Kiro sessions.
+The session fields were checked against a session file from a real Kiro install (1 October 2026). Kiro is not installed on the Mac this app is built on, so the tests use hand-written JSON with the same field names and shapes. The plan output is still read with patterns taken from CodexBar and has not been checked against a live `/usage` run.
 
 ## Antigravity and OpenCode
 
@@ -118,10 +120,10 @@ The source comments state Kiro was not installed when this reader was written. I
 
 | Fact | Providers | Status | Caveat |
 |---|---|---|---|
-| Session, turn and token totals | Claude/Codex; Kiro when counts exist | Implemented; Kiro unverified | Nil remains unavailable. Cursor only has a live prompt count. |
-| USD and credits | Claude USD; Kiro credits | Implemented; Kiro unverified | USD is an estimate. Do not combine USD and credits. |
+| Session, turn and token totals | Claude/Codex; Kiro sessions, turns and tool calls | Implemented | Nil remains unavailable: Kiro tokens stay nil while it writes zero counts. Kiro's context is kept apart as `AgentPeriodUsage.context`, the latest reading in the period, and is never added into tokens. Cursor only has a live prompt count. |
+| USD and credits | Claude USD; Kiro credits | Implemented; Kiro credits observed | USD is an estimate. Do not combine USD and credits. |
 | Working time | Claude/Codex/Kiro | Derivable | Per-session gaps capped at five minutes; parallel sessions both count. |
-| Model/work splits, pace and usual pace | Claude/Codex/Kiro with sufficient history | Derivable | Pace excludes cache reads. Usual pace uses seven days of main sessions. |
+| Model/work splits, pace and usual pace | Claude/Codex/Kiro with sufficient history | Derivable | Model shares use tokens when any model has them, else credits (Kiro), else working time. Pace excludes cache reads. Usual pace uses seven days of main sessions. |
 | Context-full and limit forecasts | Sessions/windows with enough data | Derivable | Forecasts are estimates. Calculate reset-based time only after provider supplied a reset. |
 | Claude limits | Status-line changed log | Implemented when configured | Per account; cache snapshots are valid up to seven days but contain no reset. |
 | Codex limits | Token-count rollout events | Implemented when present | Ignore expired/unsupported windows. |
@@ -137,11 +139,11 @@ The compact rail shows the top four sessions by USD cost when known, then contex
 
 ### Detail panel
 
-Lead with task, provider/state, project/branch and context. Then show Claude USD plus token mix, Codex token mix plus effort, Kiro credits plus token mix, Cursor model/context/prompts, or OpenCode terminal/location only. Put first ask, tools, changed files, pace and context forecast in the details control. Show one Claude sub-agent summary and state that it is included in totals. Show the friendly Claude profile name, but keep shared limits out of a single session.
+Lead with task, provider/state, project/branch and context. Then show Claude USD plus token mix, Codex token mix plus effort, Kiro credits (it has no token mix), Cursor model/context/prompts, or OpenCode terminal/location only. Put first ask, tools, changed files, pace and context forecast in the details control. Show one Claude sub-agent summary and state that it is included in totals. Show the friendly Claude profile name, but keep shared limits out of a single session.
 
 ### Usage
 
-Usage owns per-account Claude limits, Codex windows, Kiro plan/credits, reset/freshness labels, Today/Week/Month, model/work splits and charts. Keep USD, tokens and credits in separate columns. Say “no history reported” for Cursor/OpenCode. Exclude Antigravity until it has a reader.
+Usage owns per-account Claude limits, Codex windows, Kiro plan/credits, reset/freshness labels, Today/Week/Month, model/work splits and charts. Keep USD, tokens and credits in separate columns. An agent with no tokens but a context reading (Kiro) shows `ctx ~126k` in the tokens cell as a faint estimate, outside the "All agents" total. Say “no history reported” for Cursor/OpenCode. Exclude Antigravity until it has a reader.
 
 ## Stale documentation claims
 
@@ -150,7 +152,7 @@ Usage owns per-account Claude limits, Codex windows, Kiro plan/credits, reset/fr
 | README says Codex has only a weekly limit. | `CodexRollout.limitReading` maps 300 minutes to 5-hour and 10,080 to weekly. | Say 5-hour and weekly when present. |
 | README says Cursor is counted in Today/Week/Month. | `UsageHistory` has no Cursor scan. | Say live context/prompt count only; no historical totals. |
 | `docs/how-it-works.md` says history refreshes every 10 minutes. | `UsageHistory.refreshInterval` is 60 seconds. | Update to one minute. |
-| README says everything runs against real sessions but Kiro is untried. | Kiro comments say it was inferred from tokscale and CodexBar. | Keep Kiro explicitly unverified. |
+| README says Kiro's reader has not been tried on a real Kiro session. | Its session fields were checked against a real install's file; every token count there is 0. | Say the session fields are checked and Kiro's tokens are unknown. Only the plan output is still unverified. |
 | README calls Antigravity green “for when it is supported.” | No executable mapping or data reader exists. | Call it unavailable today. |
 
 ## Key sources
