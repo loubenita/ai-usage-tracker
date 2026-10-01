@@ -177,6 +177,45 @@ struct OverlayPresenterTests {
         return GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 5400)
     }
 
+    @Test func sessionsThatReadTheSameInTheStripAreToldApartByWhenTheyStarted() throws {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        func event(_ pid: Int32, startedAfter seconds: TimeInterval, project: String, folder: String) -> SessionEvent {
+            let tag = WorkTag(project: project, concern: project)
+            return SessionEvent(
+                timestamp: start + seconds, agent: .claudeCode, sessionID: "claude-code-\(pid)", kind: .start,
+                state: .working, activeDuration: 0, idleDuration: 0, work: tag,
+                workDetail: Work(tag: tag, branch: nil, folder: folder),
+                origin: SessionOrigin(pid: pid, tty: "ttys00\(pid)", terminal: .warp, folder: folder)
+            )
+        }
+        // Two shells in the same folder, 5h 07m apart, a third with the same title in another
+        // project, and a fourth that reads differently.
+        let events = [
+            event(1, startedAfter: 0, project: "Home folder", folder: "/Users/me/lenardpop"),
+            event(2, startedAfter: 18_420, project: "Home folder", folder: "/Users/me/lenardpop"),
+            event(3, startedAfter: 60, project: "client", folder: "/Users/me/client/lenardpop"),
+            event(4, startedAfter: 120, project: "shop", folder: "/Users/me/shop"),
+        ]
+        let records = UsageRecords(turns: [], limits: [], sessionEvents: events, capturedAt: start)
+        let settings = UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20)
+        let report = GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 20_000)
+        let strip = presenter.strip(report, hovered: nil, open: nil, acknowledged: [])
+        let items = Dictionary(uniqueKeysWithValues: strip.items.map { ($0.id, $0) })
+
+        // 1_790_000_000 is 15:13 in London, and the second shell started at 20:20.
+        #expect(items["claude-code-1"]?.title == "lenardpop · 15:13")
+        #expect(items["claude-code-2"]?.title == "lenardpop · 20:20")
+        // The same title in another project, and a title nobody else has, are left as they were.
+        #expect(items["claude-code-3"]?.title == "lenardpop")
+        #expect(items["claude-code-4"]?.title == "shop")
+        // The label read aloud says the same, and the session keeps its key.
+        #expect(items["claude-code-2"]?.accessibilityLabel.hasPrefix("lenardpop · 20:20, Claude, Home folder") == true)
+        #expect(items["claude-code-3"]?.accessibilityLabel.hasPrefix("lenardpop, Claude, client") == true)
+        #expect(Set(items.keys) == ["claude-code-1", "claude-code-2", "claude-code-3", "claude-code-4"])
+        // The panel's own title does not change.
+        #expect(presenter.panel(report, sessionID: "claude-code-1")?.title == "lenardpop")
+    }
+
     @Test func theSessionShowsItsAccountWhenKnown() throws {
         let report = detected(turns: [], accountName: "Work")
         let strip = presenter.strip(report, hovered: nil, open: nil, acknowledged: [])

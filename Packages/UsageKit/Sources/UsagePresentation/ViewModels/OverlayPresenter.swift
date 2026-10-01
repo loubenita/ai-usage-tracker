@@ -33,6 +33,12 @@ public struct OverlayPresenter: Sendable {
 
     let format: UsageFormatter
 
+    /// What makes two strip rows read the same: their title and the project they are in.
+    private struct SameTitle: Hashable {
+        let title: String
+        let project: String
+    }
+
     public init(formatter: UsageFormatter) {
         self.format = formatter
     }
@@ -55,14 +61,23 @@ public struct OverlayPresenter: Sendable {
                         lastActivityAt: $0.summary.lastActivityAt)
         })
         let priorityRank = Dictionary(uniqueKeysWithValues: priority.enumerated().map { ($0.element.id, $0.offset) })
+        // Two sessions with the same title in the same project are different processes that
+        // read the same, such as two shells in the home folder. Each is told apart by when it
+        // started. The session itself, its key and its panel title are not changed.
+        let key = { (session: SessionReport) in
+            SameTitle(title: session.title, project: session.summary.work.tag.project)
+        }
+        let repeated = Set(Dictionary(grouping: sessions, by: key).filter { $0.value.count > 1 }.keys)
         let items = report.sessions.map { session in
             let summary = session.summary
             let highlight: ItemHighlight =
                 summary.id == open ? .selected : summary.id == hovered ? .hovered : .none
+            let title = repeated.contains(key(session))
+                ? "\(session.title) · \(format.clock(summary.startedAt))" : session.title
             return StripItemModel(
                 id: summary.id,
                 ring: ring(session),
-                title: session.title,
+                title: title,
                 project: summary.work.tag.project,
                 branch: summary.work.branch,
                 time: format.compactDuration(summary.activeDuration),
@@ -71,7 +86,7 @@ public struct OverlayPresenter: Sendable {
                 highlight: highlight,
                 priority: priorityRank[summary.id] ?? 0,
                 accessibilityLabel: [
-                    session.title,
+                    title,
                     summary.agent.displayName,
                     summary.work.tag.project,
                     summary.work.branch,

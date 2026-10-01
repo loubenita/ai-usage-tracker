@@ -364,6 +364,42 @@ struct ProcessSessionRepositoryTests {
         #expect(found.allSatisfy { $0.terminal == .background })
     }
 
+    /// A process list with the working directory of each process given by the test.
+    struct FolderSource: ProcessSource {
+        let text: String
+        let folders: [Int32: String]
+        func processList() throws -> String { text }
+        func workingDirectory(of pid: Int32) -> String? { folders[pid] }
+    }
+
+    /// The app asks `kiro-cli` for the plan with no terminal, in a folder of its own. That is the
+    /// app's question, not a session, so it is not listed; a Kiro run from a script is.
+    @Test func theAppsOwnKiroPlanQuestionIsNotASession() async throws {
+        let table = """
+          PID  PPID TTY      STARTED                      COMMAND
+            1     0 ??       Mon Aug 24 20:16:04 2026     /sbin/launchd
+          700     1 ??       Sun Sep 27 09:00:00 2026     kiro-cli chat --no-interactive /usage
+          701   700 ??       Sun Sep 27 09:00:01 2026     /Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat chat --no-interactive /usage
+          800     1 ??       Sun Sep 27 09:00:02 2026     kiro-cli chat --no-interactive tidy the changelog
+          900     1 ??       Sun Sep 27 09:00:03 2026     kiro-cli chat --no-interactive review the diff
+        """
+        let source = FolderSource(text: table, folders: [
+            700: "/private/var/folders/x/T/" + KiroPlanReader.folderName,
+            701: "/private/var/folders/x/T/" + KiroPlanReader.folderName,
+            800: "/Users/me/shop",
+            // Only a folder whose last name is the app's is the app's.
+            900: "/Users/me/" + KiroPlanReader.folderName + "-notes",
+        ])
+        let repository = ProcessSessionRepository(
+            source: source, homeDirectory: "/nonexistent/home", claudeDirectory: "/nonexistent",
+            timeZone: Fixture.london
+        )
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        #expect(records.sessionEvents.compactMap(\.origin?.pid) == [800, 900])
+        #expect(!records.sessionEvents.contains { $0.sessionID == "kiro-700" })
+        #expect(records.sessionEvents.allSatisfy { $0.agent == .kiro })
+    }
+
     @Test func servesOneStartRecordPerSession() async throws {
         let repository = ProcessSessionRepository(
             source: RecordedSource(text: try Fixture.text("ps-2026-09-21.txt")),

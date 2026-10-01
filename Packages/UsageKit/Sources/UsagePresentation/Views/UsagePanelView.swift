@@ -205,16 +205,17 @@ private struct AgentTable: View {
             .minimumScaleFactor(0.8)
             .frame(maxWidth: .infinity, alignment: .leading)
             cell(row.time, weight: weight)
-            cell(row.tokens, weight: weight)
+            cell(row.tokens, weight: weight, isEstimate: row.tokensIsEstimate)
             cell(row.spend, weight: weight)
         }
         .staticDigits()
     }
 
-    private func cell(_ value: String?, weight: Font.Weight) -> some View {
+    /// A measured value is in the primary colour; "n/a" and an estimate are faint.
+    private func cell(_ value: String?, weight: Font.Weight, isEstimate: Bool = false) -> some View {
         Text(value ?? "n/a")
             .font(TypeScale.font(TypeScale.body, weight))
-            .foregroundStyle(value == nil ? Theme.faint : Theme.primary)
+            .foregroundStyle(value == nil || isEstimate ? Theme.faint : Theme.primary)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -298,6 +299,11 @@ private struct AgentUsageView: View {
         }
     }
 
+    /// The models column beside the time column: wider when each model also shows its credits.
+    private var modelsWidth: CGFloat {
+        model.models.contains { $0.credits != nil } ? 152 : 112
+    }
+
     /// Models on the left and where the time went on the right; either alone takes the width.
     private var columns: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -308,13 +314,16 @@ private struct AgentUsageView: View {
                         HStack {
                             Text(row.name).foregroundStyle(Theme.name).lineLimit(1)
                             Spacer(minLength: 4)
+                            if let credits = row.credits {
+                                Text(credits).foregroundStyle(Theme.secondary)
+                            }
                             Text(row.percent).foregroundStyle(Theme.primary)
                         }
                         .font(TypeScale.secondaryFont)
                         .staticDigits()
                     }
                 }
-                .frame(width: model.whereRows.isEmpty ? nil : 112, alignment: .leading)
+                .frame(width: model.whereRows.isEmpty ? nil : modelsWidth, alignment: .leading)
                 .frame(maxWidth: model.whereRows.isEmpty ? .infinity : nil, alignment: .leading)
             }
             if !model.whereRows.isEmpty {

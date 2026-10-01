@@ -191,6 +191,12 @@ public struct ProcessSessionRepository: UsageRepository {
             // An idle spare the daemon keeps warm has no session file until it is claimed.
             if found.agent == .claudeCode, found.isBackground, claude == nil { return }
             folder = source.workingDirectory(of: process.pid) ?? claude?.file.cwd ?? homeDirectory
+            // The `kiro-cli` the app runs every few minutes to read Kiro's plan has no terminal,
+            // so it would show as a background session. It runs in a folder of the app's own,
+            // and it is not the person's work (the same rule as `UsageHistory`).
+            if found.agent == .kiro, URL(fileURLWithPath: folder).lastPathComponent == KiroPlanReader.folderName {
+                return
+            }
             work = WorkNamer(files: files, homeDirectory: homeDirectory).work(folder: folder, branch: nil)
             let before = live.claimed
             switch found.agent {
