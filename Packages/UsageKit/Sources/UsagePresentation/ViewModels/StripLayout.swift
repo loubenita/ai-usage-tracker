@@ -15,6 +15,10 @@ public enum StripLayout {
     public static let expandedOverlayWidth = expandedWidth + overlayEdgeInset + overlayShadowMargin
     /// SwiftUI and the hosting panel share one resize timeline, so the rail stays one surface.
     public static let railTransitionDuration: Double = 0.42
+    /// The glass's spring when the rail opens and closes. Both settle well inside the
+    /// transition duration, which the window waits out before it narrows.
+    public static let railOpenDuration: Double = 0.32
+    public static let railCloseDuration: Double = 0.26
     /// Expanded strip + gap + panel + room for the soft glass shadow.
     public static let overlayWidth: CGFloat = expandedWidth + overlayEdgeInset + panelWidth + overlayShadowMargin
 
@@ -39,6 +43,10 @@ public enum StripLayout {
     /// The compact handle is drag-only; the rings and overflow count start the dwell.
     public static func isCompactHoverTarget(y: CGFloat) -> Bool {
         y >= compactVerticalInset + handleBand + compactHandleToContentSpacing
+    }
+    /// The pointer is on the visible rail, of `size`, and, when compact, below its handle.
+    public static func isHoverTarget(_ point: CGPoint, in size: CGSize, isExpanded: Bool) -> Bool {
+        CGRect(origin: .zero, size: size).contains(point) && (isExpanded || isCompactHoverTarget(y: point.y))
     }
     /// Maximum height when both compact indicators and the overflow count are present.
     public static let compactHeight = handleBand
@@ -108,10 +116,7 @@ public enum StripLayout {
         let height = min(contentHeight, available)
         let restingHeight = min(restHeight, height)
         let growthOnEachSide = (height - restingHeight) / 2
-        let restingTravel = max((available - restingHeight) / 2, 0)
-        let edgeBias = restingTravel > 0
-            ? min(max(offset / restingTravel, -1), 1)
-            : 0
+        let edgeBias = edgeBias(restHeight: restingHeight, available: available, offset: offset)
         let wantedOffset = offset - edgeBias * growthOnEachSide
         let limit = max((available - height) / 2, 0)
         let placedOffset = min(max(wantedOffset, -limit), limit)
@@ -120,9 +125,33 @@ public enum StripLayout {
         )
     }
 
+    /// How far toward an edge the rail rests: -1 at the top, 0 in the middle, 1 at the bottom.
+    private static func edgeBias(restHeight: CGFloat, available: CGFloat, offset: CGFloat) -> CGFloat {
+        let restingTravel = max((available - restHeight) / 2, 0)
+        return restingTravel > 0 ? min(max(offset / restingTravel, -1), 1) : 0
+    }
+
+    /// The fraction of the rail's height, from its top, that stays still on screen while it
+    /// grows: its middle when centred, its bottom edge when resting at the bottom. Pinning the
+    /// contents there lets the glass uncover them without them moving.
+    public static func growthAnchor(restHeight: CGFloat, available: CGFloat, offset: CGFloat) -> CGFloat {
+        0.5 + edgeBias(restHeight: restHeight, available: available, offset: offset) / 2
+    }
+
     /// Where a panel of `height` goes beside a strip whose middle is `beside` the screen's
     /// middle: level with the strip, but never off the screen, and scrolling when too tall.
     public static func place(panel height: CGFloat, available: CGFloat, beside: CGFloat) -> Placement {
         place(contentHeight: height, restHeight: height, available: available, offset: beside)
+    }
+
+    /// A session panel whose top is level with the clicked row, `top` points below the top of
+    /// the available height, but pushed back on when it would run off the screen.
+    public static func place(panel height: CGFloat, available: CGFloat, top: CGFloat) -> Placement {
+        place(panel: height, available: available, beside: top + height / 2 - available / 2)
+    }
+
+    /// The usage panel, whose bottom is level with the Usage button's, kept on the screen.
+    public static func place(panel height: CGFloat, available: CGFloat, bottom: CGFloat) -> Placement {
+        place(panel: height, available: available, beside: bottom - height / 2 - available / 2)
     }
 }

@@ -19,6 +19,8 @@ public struct OverlayView: View {
     @State private var stripHeight: CGFloat = 0
     @State private var restStripHeight: CGFloat = 0
     @State private var panelHeight: CGFloat = 0
+    /// Where each session row and the Usage button sit, for lining the open panel up with them.
+    @State private var anchors: [String: CGRect] = [:]
 
     public init(
         viewModel: OverlayViewModel,
@@ -53,24 +55,28 @@ public struct OverlayView: View {
             contentHeight: displayedStripHeight, restHeight: restStripHeight, available: availableHeight,
             offset: viewModel.stripOffset
         )
-        let panel = StripLayout.place(panel: panelHeight, available: availableHeight, beside: strip.offset)
+        let panel = panelPlacement(available: availableHeight, besideStrip: strip.offset)
         // One container, so the strip and the panel are glass of one kind and blend at their edges.
         return GlassEffectContainer(spacing: GlassStyle.spacing) {
             HStack(alignment: .center, spacing: 8) {
                 Spacer(minLength: 0)
                 // A panel taller than the screen scrolls instead of running off it.
+                // The panel's own height, not the frame's, which takes the whole screen.
                 ViewThatFits(in: .vertical) {
-                    openPanel
-                    ScrollView(.vertical) { openPanel }.scrollIndicators(.never)
+                    openPanel.measureHeight { panelHeight = $0 }
+                    ScrollView(.vertical) { openPanel.measureHeight { panelHeight = $0 } }
+                        .scrollIndicators(.never)
                 }
                 .frame(maxHeight: availableHeight)
-                .measureHeight { panelHeight = $0 }
                 .offset(y: panel.offset)
                 if let model = viewModel.strip {
                     StripView(
                         model: model,
                         availableHeight: availableHeight,
                         offset: strip.offset,
+                        growthAnchor: StripLayout.growthAnchor(
+                            restHeight: restStripHeight, available: availableHeight, offset: viewModel.stripOffset
+                        ),
                         dragOrigin: StripLayout.dragOrigin(for: strip),
                         isDragging: viewModel.isDraggingStrip,
                         restHeight: restStripHeight,
@@ -85,9 +91,11 @@ public struct OverlayView: View {
                         },
                         onClick: { viewModel.click($0) },
                         onUsage: { viewModel.openUsage() },
+                        onAnchor: { id, frame in anchors[id] = frame },
                         onDragBegin: { viewModel.beginStripDrag() },
                         onDrag: { offset, limit in viewModel.dragStrip(to: offset, limit: limit) },
-                        onDragEnd: { viewModel.endStripDrag() }
+                        onDragEnd: { viewModel.endStripDrag() },
+                        onFrame: { viewModel.stripFrameChanged($0) }
                     )
                     // The resting rail is a macOS surface with air around it, not a clipped
                     // extension of the screen edge. The expanded list keeps that same inset.
@@ -105,6 +113,19 @@ public struct OverlayView: View {
         // Position the glass at the edge without making the transparent window a full-size hit
         // target. Empty space remains available to whatever is behind the overlay.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        .coordinateSpace(.named(StripAnchor.space))
+    }
+
+    /// A session panel's top is level with its row and the usage panel's bottom with the Usage
+    /// button, both kept on the screen. Before the rows are measured, it sits beside the strip.
+    private func panelPlacement(available: CGFloat, besideStrip: CGFloat) -> StripLayout.Placement {
+        if let id = viewModel.openSessionID, let row = anchors[id] {
+            return StripLayout.place(panel: panelHeight, available: available, top: row.minY)
+        }
+        if viewModel.overview != nil, let button = anchors[StripAnchor.usage] {
+            return StripLayout.place(panel: panelHeight, available: available, bottom: button.maxY)
+        }
+        return StripLayout.place(panel: panelHeight, available: available, beside: besideStrip)
     }
 
     @ViewBuilder private var openPanel: some View {

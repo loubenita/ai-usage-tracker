@@ -58,7 +58,7 @@ public enum TerminalFocus {
         case .terminal: "com.apple.Terminal"
         case .iterm: "com.googlecode.iterm2"
         case .ghostty: "com.mitchellh.ghostty"
-        case .tmux, .unknown: nil
+        case .tmux, .unknown, .background: nil
         }
     }
 
@@ -75,7 +75,8 @@ public enum TerminalFocus {
             return safeTTY(origin.tty) == nil ? .application(.iterm) : .session
         case .warp, .ghostty:
             return bundleID(of: origin.terminal) == nil ? nil : .application(origin.terminal)
-        case .unknown: return nil
+        // A background session has no window to bring forward.
+        case .unknown, .background: return nil
         }
     }
 
@@ -97,7 +98,7 @@ public enum TerminalFocus {
         case .iterm:
             guard let tty = safeTTY(origin.tty) else { return activate(.iterm) }
             return [.run(program: "osascript", arguments: ["-e", iTermScript(tty: tty)])] + activate(.iterm)
-        case .warp, .ghostty, .unknown:
+        case .warp, .ghostty, .unknown, .background:
             return activate(origin.terminal)
         }
     }

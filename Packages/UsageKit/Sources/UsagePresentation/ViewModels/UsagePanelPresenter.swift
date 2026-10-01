@@ -205,7 +205,8 @@ public struct UsagePanelPresenter: Sendable {
         // misleading empty row on Today.
         guard allStandings.isEmpty || !standings.isEmpty else { return [] }
         guard !standings.isEmpty else {
-            guard account != nil else { return [] }
+            // Month shows no rolling window, so a missing reading is nothing to report there.
+            guard account != nil, period != .month else { return [] }
             return [LimitListRowModel(
                 id: "\(agent.rawValue)-\(accountID ?? "none")-none", agent: agent, name: label, fraction: nil, used: "",
                 freesUp: "No recent limit reading", isNearlyUsed: false
@@ -248,7 +249,7 @@ public struct UsagePanelPresenter: Sendable {
         let open = report.sessions.map(\.summary).filter { $0.agent == agent }
         let limits = report.limits(for: agent)
         let accounts = report.accounts.filter { $0.agent == agent }
-        let accountsWithoutCurrentLimits = accounts.filter {
+        let accountsWithoutCurrentLimits = period == .month ? [] : accounts.filter {
             $0.limits.standings.isEmpty && currentSnapshot($0.snapshot, now: report.now) == nil
         }.map(\.name)
         let hasTokens = fullUsed?.tokens != nil
@@ -360,24 +361,38 @@ public struct UsagePanelPresenter: Sendable {
 
     func snapshotValues(_ snapshot: AccountUsageSnapshot, period: UsagePeriod) -> [(String, Double?)] {
         switch period {
-        case .today:
-            [("5-hour", snapshot.fiveHourPercent)]
-        case .week, .month:
-            [("week", snapshot.weeklyPercent), ("5-hour", snapshot.fiveHourPercent)]
+        case .today: [("5-hour", snapshot.fiveHourPercent)]
+        case .week: [("week", snapshot.weeklyPercent)]
+        case .month: []
         }
     }
 
+    /// Each period shows the limit that runs over it: Today the 5-hour window, Week the weekly
+    /// limit, and Month only a monthly allowance, since neither rolling window says anything
+    /// about a month.
     func visibleStandings(_ standings: [LimitStanding], period: UsagePeriod) -> [LimitStanding] {
-        period == .today ? standings.filter { $0.kind != .weekly } : standings
+        standings.filter { Self.isVisible($0.kind, in: period) }
     }
 
     func visibleLimits(_ limits: AgentLimits, period: UsagePeriod) -> AgentLimits {
-        guard period == .today else { return limits }
+        let showsWeek = Self.isVisible(.weekly, in: period)
         return AgentLimits(
-            fiveHour: limits.fiveHour, weekly: nil, monthly: limits.monthly,
-            creditsUsedThisMonth: limits.creditsUsedThisMonth, weeklyUsedToday: nil, weeklyUsedByDay: nil,
+            fiveHour: Self.isVisible(.fiveHour, in: period) ? limits.fiveHour : nil,
+            weekly: showsWeek ? limits.weekly : nil,
+            monthly: limits.monthly,
+            creditsUsedThisMonth: limits.creditsUsedThisMonth,
+            weeklyUsedToday: showsWeek ? limits.weeklyUsedToday : nil,
+            weeklyUsedByDay: showsWeek ? limits.weeklyUsedByDay : nil,
             plan: limits.plan, creditsUsedToday: limits.creditsUsedToday, creditsPerDayLeft: limits.creditsPerDayLeft
         )
+    }
+
+    private static func isVisible(_ kind: LimitStanding.Kind, in period: UsagePeriod) -> Bool {
+        switch kind {
+        case .fiveHour: period == .today
+        case .weekly: period == .week
+        default: true
+        }
     }
 
     /// "On pace to end the week at about 90%.", or when it runs out first.

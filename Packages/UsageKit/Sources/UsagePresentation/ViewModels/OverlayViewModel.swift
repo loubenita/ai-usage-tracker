@@ -17,7 +17,10 @@ public final class OverlayViewModel {
     /// Process discovery is fresh enough to feel live without launching `ps` every two seconds.
     public static let defaultReloadInterval = 6
     /// The compact rail waits for a deliberate still hover before revealing the session list.
-    public static let defaultStripHoverDelay: Duration = .seconds(3)
+    public static let defaultStripHoverDelay: Duration = .seconds(1)
+    /// How long an open rail waits after an exit before closing: long enough to ignore an exit
+    /// reported while the rail changes shape under a still pointer, too short to notice.
+    public static let defaultStripLeaveGrace: Duration = .milliseconds(150)
     public private(set) var report: UsageReport?
     public private(set) var hoveredSessionID: String?
     public private(set) var openSessionID: String?
@@ -52,6 +55,7 @@ public final class OverlayViewModel {
     private let reloadInterval: Int
     private let totalsInterval: Int
     private let stripHoverDelay: Duration
+    private let stripLeaveGrace: Duration
     @ObservationIgnored private let stripHoverSleeper: @Sendable (Duration) async -> Bool
     static let pendingTotalsInterval = 10
     /// The open sessions, as last read.
@@ -62,7 +66,8 @@ public final class OverlayViewModel {
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var totalsTask: Task<Void, Never>?
     @ObservationIgnored private var stripHoverTask: Task<Void, Never>?
-    @ObservationIgnored private var stripHoverOrigin: CGPoint?
+    @ObservationIgnored private var stripLeaveTask: Task<Void, Never>?
+    @ObservationIgnored private var stripFrame: CGRect?
     /// How many times the totals were built: the tests count them.
     @ObservationIgnored private(set) var totalsBuilds = 0
     /// When the totals are next rebuilt on their own; the overview counts down to it.
@@ -80,6 +85,7 @@ public final class OverlayViewModel {
         reloadInterval: Int = OverlayViewModel.defaultReloadInterval,
         totalsInterval: Int = 600,
         stripHoverDelay: Duration = OverlayViewModel.defaultStripHoverDelay,
+        stripLeaveGrace: Duration = OverlayViewModel.defaultStripLeaveGrace,
         stripHoverSleeper: (@Sendable (Duration) async -> Bool)? = nil,
         opener: (any SessionOpening)? = nil,
         stripOffset: CGFloat = 0,
@@ -94,6 +100,7 @@ public final class OverlayViewModel {
         self.reloadInterval = max(reloadInterval, 1)
         self.totalsInterval = max(totalsInterval, 1)
         self.stripHoverDelay = stripHoverDelay
+        self.stripLeaveGrace = stripLeaveGrace
         self.stripHoverSleeper = stripHoverSleeper ?? Self.sleepForStripHover
         let formatter = UsageFormatter(calendar: calendar)
         self.presenter = OverlayPresenter(formatter: formatter)
@@ -220,24 +227,29 @@ public final class OverlayViewModel {
     public func pointerOverStrip(_ inside: Bool) {
         stripHoverTask?.cancel()
         stripHoverTask = nil
-        stripHoverOrigin = nil
+        stripLeaveTask?.cancel()
+        stripLeaveTask = nil
         isPointerOverStrip = inside
     }
 
-    /// Compact content opens only after three continuous seconds with the pointer still.
-    /// Every coordinate change starts a fresh dwell; the handle never calls this intent.
+    /// Compact content opens one second after the pointer arrives on it. A hand resting on the
+    /// rail still moves it slightly, so movement does not restart the wait; leaving does.
+    /// The handle never calls this intent. `location` is where the pointer is on the rail.
     public func pointerMovedOverStrip(at location: CGPoint = .zero) {
         guard !isDraggingStrip else { return }
-        guard !isPointerOverStrip else { return }
-        if stripHoverOrigin == location { return }
-        stripHoverTask?.cancel()
-        stripHoverOrigin = location
+        guard !isPointerOverStrip else {
+            // The pointer is still here, so an exit reported while the rail grew was false.
+            stripLeaveTask?.cancel()
+            stripLeaveTask = nil
+            return
+        }
+        guard stripHoverTask == nil else { return }
         let delay = stripHoverDelay
         stripHoverTask = Task { [weak self] in
             guard await self?.stripHoverSleeper(delay) == true, !Task.isCancelled else { return }
+            self?.willExpandStrip?()
             self?.isPointerOverStrip = true
             self?.stripHoverTask = nil
-            self?.stripHoverOrigin = nil
         }
     }
 
@@ -250,12 +262,42 @@ public final class OverlayViewModel {
         }
     }
 
-    /// Leaving the stable tracking region cancels a pending expansion and restores the slim rail.
+    /// Leaving cancels a pending expansion. An open rail closes only after a short grace: while
+    /// the rail and its window grow under a still pointer, the view reports an exit and then
+    /// the pointer again, and that false exit would close the rail as soon as it opened.
     public func pointerLeftStrip() {
         stripHoverTask?.cancel()
         stripHoverTask = nil
-        stripHoverOrigin = nil
-        isPointerOverStrip = false
+        guard isPointerOverStrip, stripLeaveTask == nil else { return }
+        let grace = stripLeaveGrace
+        stripLeaveTask = Task { [weak self] in
+            // The view can report an exit while the pointer is still on the rail, as the rail
+            // changes shape under it, and then report nothing more. So the pointer's real
+            // position decides, looked at again until it has gone.
+            repeat {
+                guard await self?.stripHoverSleeper(grace) == true, !Task.isCancelled else { return }
+            } while self?.isPointerStillOnStrip == true
+            self?.isPointerOverStrip = false
+            self?.stripLeaveTask = nil
+        }
+    }
+
+    /// Where the pointer is, in the same coordinates as `stripFrameChanged`, when the platform
+    /// can say. Without it an exit is taken at its word.
+    @ObservationIgnored public var pointerLocation: (@MainActor () -> CGPoint?)?
+
+    /// Called just before the rail opens, so the window can make room first and the rail grows
+    /// from where it is on screen.
+    @ObservationIgnored public var willExpandStrip: (@MainActor () -> Void)?
+
+    /// Where the rail is drawn, so a reported exit can be checked against the pointer.
+    public func stripFrameChanged(_ frame: CGRect) {
+        stripFrame = frame
+    }
+
+    private var isPointerStillOnStrip: Bool {
+        guard let frame = stripFrame, let location = pointerLocation?() else { return false }
+        return frame.contains(location)
     }
 
     /// Hovering an item highlights it and stops its "needs you" dot pulsing.
@@ -310,7 +352,7 @@ public final class OverlayViewModel {
     /// Dragging the visible handle picks the strip up; it then follows the pointer up and down
     /// the screen's edge, and stays where it is dropped.
     public func beginStripDrag() {
-        pointerLeftStrip()
+        pointerOverStrip(false)
         isDraggingStrip = true
     }
 

@@ -17,6 +17,8 @@ final class OverlayController {
     private let launchState: LaunchState
     private let panel: OverlayPanel
     private var outsideClickMonitor: Any?
+    /// A pending narrowing of the window, waiting for the glass to finish shrinking.
+    private var shrinkTask: Task<Void, Never>?
     private lazy var escape = EscapeHotKey { [weak self] in self?.viewModel.close() }
 
     init(viewModel: OverlayViewModel, launchState: LaunchState) {
@@ -36,6 +38,22 @@ final class OverlayController {
         ) { NSApp.terminate(nil) })
         host.sizingOptions = []
         panel.contentView = host
+        // Widening the window moves the rail within it. Done before the rail grows, the rail is
+        // laid out at its new place first, so the growth starts from where it is on screen.
+        viewModel.willExpandStrip = { [weak self] in
+            guard let self, panel.frame.width < StripLayout.expandedOverlayWidth else { return }
+            position(width: StripLayout.expandedOverlayWidth)
+            // SwiftUI would otherwise lay out the wider window on its next pass, together with
+            // the growth, and animate the rail from its old place in the narrow window.
+            panel.contentView?.layoutSubtreeIfNeeded()
+            panel.displayIfNeeded()
+        }
+        // The pointer in the hosting view's top-left coordinates, SwiftUI's global space here.
+        viewModel.pointerLocation = { [weak panel, weak host] in
+            guard let panel, let host else { return nil }
+            let point = host.convert(panel.mouseLocationOutsideOfEventStream, from: nil)
+            return host.isFlipped ? point : CGPoint(x: point.x, y: host.bounds.height - point.y)
+        }
     }
 
     func show() {
@@ -60,19 +78,24 @@ final class OverlayController {
     /// Against the screen's right edge, with only enough window width for the active glass.
     /// Keeping the transparent window narrow leaves the rest of the desktop available to the
     /// application behind it.
-    private func position(animated: Bool = false) {
+    private func position(width wanted: CGFloat? = nil, animated: Bool = false) {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
-        let width = overlayWidth
+        let width = wanted ?? overlayWidth
         let frame = NSRect(x: screen.frame.maxX - width, y: visible.minY, width: width, height: visible.height)
-        guard animated, panel.frame != frame else {
+        shrinkTask?.cancel()
+        shrinkTask = nil
+        // The window is transparent; only the glass inside it animates. Animating the window's
+        // own frame clipped the glass to its moving left edge, so a panel seemed to slide in.
+        // It widens at once, before the glass grows, and narrows once the glass has shrunk.
+        guard animated, frame.width < panel.frame.width else {
             panel.setFrame(frame, display: true)
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = StripLayout.railTransitionDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            panel.animator().setFrame(frame, display: true)
+        shrinkTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(StripLayout.railTransitionDuration))
+            guard !Task.isCancelled else { return }
+            self?.panel.setFrame(frame, display: true)
         }
     }
 

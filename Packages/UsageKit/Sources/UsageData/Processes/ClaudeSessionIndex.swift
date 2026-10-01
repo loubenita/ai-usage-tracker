@@ -17,13 +17,16 @@ struct ClaudeSessionFile: Sendable, Hashable, Decodable {
     let statusUpdatedAt: Double?
     /// Where the session runs in tmux, "session:@window.%pane", when it runs inside tmux.
     let tmux: String?
+    /// "bg" for a session Claude Code's daemon runs in the background.
+    let kind: String?
 
     init(
         pid: Int32, sessionId: String, cwd: String, startedAt: Double?,
         name: String? = nil, nameSource: String? = nil, status: String? = nil, statusUpdatedAt: Double? = nil,
-        tmux: String? = nil
+        tmux: String? = nil, kind: String? = nil
     ) {
         self.tmux = tmux
+        self.kind = kind
         self.pid = pid
         self.sessionId = sessionId
         self.cwd = cwd
@@ -37,7 +40,10 @@ struct ClaudeSessionFile: Sendable, Hashable, Decodable {
     var statusChangedAt: Date? { statusUpdatedAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
 
     /// The session's name, only when the person chose it.
-    var chosenName: String? { nameSource == "user" ? name : nil }
+    /// A background session's name comes from whoever launched it, and carries no source.
+    var chosenName: String? {
+        nameSource == "user" || (kind == "bg" && nameSource == nil) ? name : nil
+    }
 }
 
 /// Links Claude Code processes to their session files and transcripts.

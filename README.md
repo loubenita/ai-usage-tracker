@@ -29,7 +29,7 @@ To quit the app, right-click the strip or a panel and choose **Quit**.
 
 ### The strip
 
-At rest a rounded glass rail sits just inside the screen's right edge. It shows up to four sessions ranked by known spend, then context use and recent activity, with a "+N" count for the rest. Hold the pointer over it for about three seconds and the rail widens into a list. Each row shows the agent, task, project and branch when known, active time, and context ring. Full facts stay in the selected session's panel.
+At rest a rounded glass rail sits just inside the screen's right edge. It shows up to four sessions ranked by known spend, then context use and recent activity, with a "+N" count for the rest. Hold the pointer over it for about a second and the rail widens into a list. Each row shows the agent, task, project and branch when known, active time, and context ring. Full facts stay in the selected session's panel.
 
 - Each ring fills as that session's context fills, turns red when it is nearly full, and carries its agent's colour.
 - Inside the ring is the current context in use: the number and the fill describe the same reading. Cumulative session tokens stay in the session panel.

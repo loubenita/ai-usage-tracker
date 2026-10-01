@@ -38,6 +38,21 @@ struct StripLayoutTests {
         #expect(StripLayout.isCompactHoverTarget(y: StripLayout.compactHeight - 8))
     }
 
+    /// The full list stays laid out, invisibly, around the compact rail. Only the rail itself
+    /// may start the hover, never the space around it.
+    @Test func onlyThePointerInsideTheVisibleRailCounts() {
+        let rail = CGSize(width: StripLayout.restingWidth, height: 150)
+        #expect(StripLayout.isHoverTarget(CGPoint(x: 18, y: 60), in: rail, isExpanded: false))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: -30, y: 170), in: rail, isExpanded: false))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: 18, y: 170), in: rail, isExpanded: false))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: -4, y: 60), in: rail, isExpanded: false))
+        // The handle is for dragging, not hovering.
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: 18, y: 10), in: rail, isExpanded: false))
+        let open = CGSize(width: StripLayout.expandedWidth, height: 400)
+        #expect(StripLayout.isHoverTarget(CGPoint(x: 100, y: 10), in: open, isExpanded: true))
+        #expect(!StripLayout.isHoverTarget(CGPoint(x: 100, y: 420), in: open, isExpanded: true))
+    }
+
     // MARK: - Dragging
 
     @Test func theStripFollowsThePointerFromWhereItWas() {
@@ -172,6 +187,39 @@ struct StripLayoutTests {
         // Taller than the screen: it fills the height and scrolls.
         let tall = StripLayout.place(panel: 1_000, available: available, beside: 200)
         #expect(tall.height == available && tall.offset == 0 && tall.scrolls)
+    }
+
+    @Test func theGrowthAnchorIsThePointThatStaysStillWhileTheRailGrows() {
+        let rest: CGFloat = 150
+        for offset: CGFloat in [-375, -200, 0, 120, 375] {
+            let anchor = StripLayout.growthAnchor(restHeight: rest, available: available, offset: offset)
+            let resting = StripLayout.place(contentHeight: rest, restHeight: rest, available: available, offset: offset)
+            let grown = StripLayout.place(contentHeight: 400, restHeight: rest, available: available, offset: offset)
+            // The same fraction of the rail's height sits at the same height on screen.
+            let before = resting.offset + (anchor - 0.5) * rest
+            let after = grown.offset + (anchor - 0.5) * 400
+            #expect(abs(before - after) < 0.001)
+        }
+        #expect(StripLayout.growthAnchor(restHeight: rest, available: available, offset: 0) == 0.5)
+        #expect(StripLayout.growthAnchor(restHeight: rest, available: available, offset: 375) == 1)
+        #expect(StripLayout.growthAnchor(restHeight: rest, available: available, offset: -375) == 0)
+    }
+
+    @Test func aSessionPanelLinesUpItsTopWithTheClickedRow() {
+        #expect(available == 900)
+        // A row 100pt from the top: the 400pt panel's top is level with it.
+        #expect(StripLayout.place(panel: 400, available: available, top: 100).offset == -150)
+        // A row near the bottom: the panel is pushed up until its bottom meets the screen's.
+        #expect(StripLayout.place(panel: 400, available: available, top: 800).offset == 250)
+        // Taller than the screen: it fills the height and scrolls.
+        let tall = StripLayout.place(panel: 1_000, available: available, top: 300)
+        #expect(tall.height == available && tall.offset == 0 && tall.scrolls)
+    }
+
+    @Test func theUsagePanelLinesUpItsBottomWithTheUsageButton() {
+        #expect(StripLayout.place(panel: 400, available: available, bottom: 850).offset == 200)
+        // A button near the top: the panel is pushed down until its top meets the screen's.
+        #expect(StripLayout.place(panel: 400, available: available, bottom: 100).offset == -250)
     }
 
     private func item(id: String, priority: Int) -> StripItemModel {
