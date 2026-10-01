@@ -243,6 +243,78 @@ struct PeriodUsageTests {
         ])
         #expect(byTime.map(\.model) == ["b", "a"])
         #expect(byTime.map(\.share) == [0.75, 0.25])
+        // No credits either, so the model rows carry none.
+        #expect(byTime.allSatisfy { $0.credits == nil })
+    }
+
+    /// A Kiro reply: credits and no tokens, as its Auto agent reports.
+    func creditReply(
+        _ id: String, _ model: ModelName, minutesAgo: Double, credits: Double?, tokens: Int? = nil,
+        context: ContextUsage? = nil
+    ) -> Turn {
+        Turn(
+            id: id, timestamp: now - minutesAgo * 60, agent: .kiro, sessionID: "s", model: model,
+            work: Work(tag: app), tokens: tokens.map { TokenUsage(input: $0, output: 0) }, cost: Cost(usd: nil),
+            context: context, credits: credits
+        )
+    }
+
+    @Test func modelsShareCreditsWhenNoModelReportsTokens() {
+        // Auto worked for four minutes and billed 2 credits. Opus answered once, so it has no
+        // working time at all, but it billed 6 credits and still has its share of them.
+        let shares = PeriodUsageBuilder.modelShares([
+            creditReply("1", "auto", minutesAgo: 10, credits: 1), creditReply("2", "auto", minutesAgo: 6, credits: 1),
+            creditReply("3", "claude-opus-4.8", minutesAgo: 3, credits: 6),
+        ])
+        #expect(shares.map(\.model) == ["claude-opus-4.8", "auto"])
+        #expect(shares.map(\.share) == [0.75, 0.25])
+        #expect(shares.map(\.credits) == [6, 2])
+        #expect(shares.map(\.workingTime) == [0, 4 * 60])
+        #expect(shares.allSatisfy { $0.tokens == nil })
+    }
+
+    @Test func tokensStillDecideTheSharesWhenCreditsAreThereToo() {
+        let shares = PeriodUsageBuilder.modelShares([
+            creditReply("1", "a", minutesAgo: 10, credits: 1, tokens: 300),
+            creditReply("2", "b", minutesAgo: 9, credits: 9, tokens: 100),
+        ])
+        #expect(shares.map(\.model) == ["a", "b"])
+        #expect(shares.map(\.share) == [0.75, 0.25])
+        #expect(shares.map(\.credits) == [1, 9])
+    }
+
+    @Test func aModelThatBilledNothingAndWorkedNoTimeHasNoShare() {
+        let shares = PeriodUsageBuilder.modelShares([
+            creditReply("1", "auto", minutesAgo: 4, credits: 2), creditReply("2", "idle", minutesAgo: 3, credits: nil),
+        ])
+        #expect(shares.map(\.model) == ["auto"])
+    }
+
+    @Test func anAgentsContextIsThatOfItsLatestReplyThatSaidAndIsNeverAddedToItsTokens() throws {
+        let earlier = ContextUsage(used: 50_000, window: 1_000_000)
+        let latest = ContextUsage(used: 125_619, window: 1_000_000)
+        // Out of order on purpose: the latest is found by its time, not its place in the list.
+        let usage = PeriodUsageBuilder.make(
+            .today,
+            turns: [
+                creditReply("latest", "auto", minutesAgo: 20, credits: 1, context: latest),
+                creditReply("earlier", "auto", minutesAgo: 30, credits: 1, context: earlier),
+                // The newest reply reports no context, so the latest reading stays.
+                creditReply("silent", "auto", minutesAgo: 10, credits: 1),
+            ],
+            start: today, bucketStarts: [], openAgents: []
+        )
+        let kiro = try #require(usage.usage(of: .kiro))
+        #expect(kiro.context == latest)
+        #expect(kiro.tokens == nil)
+        let alone = try #require(usage.byAgent[.kiro]?.usage(of: .kiro))
+        #expect(alone.context == latest)
+        // Replies that carry no context leave the agent with none.
+        let others = today()
+        let kiroWithoutContext = try #require(others.usage(of: .kiro))
+        let claudeWithoutContext = try #require(others.usage(of: .claudeCode))
+        #expect(kiroWithoutContext.context == nil)
+        #expect(claudeWithoutContext.context == nil)
     }
 
     @Test func eachBucketCountsItsWorkingTimeToo() {
