@@ -1,0 +1,168 @@
+# Releases a new version of the app. Run it from the Actions tab: "Release", then "Run workflow".
+#
+# It sets the version in project.yml and App/Info.plist, runs the tests, builds the app signed
+# with the certificate in the SIGNING_CERTIFICATE_P12 secret, commits the version to main, tags
+# it, and publishes a GitHub release with AIUsageTracker.zip. docs/development.md explains the
+# secrets it needs.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, such as 1.4.0. Leave empty for the next minor version after the latest release.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check the branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow on main. It releases main and commits the new version to it."
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          latest="$(git tag --list 'v*' --sort=-v:refname | sed 's/^v//' | grep -E "$semver" | head -n 1 || true)"
+          if [ -z "$latest" ]; then
+            latest="$(perl -ne 'print $1 if /^\s*CFBundleShortVersionString:\s*"?([0-9.]+)"?/' project.yml)"
+          fi
+
+          requested="$(printf '%s' "$REQUESTED" | tr -d '[:space:]')"
+          requested="${requested#v}"
+          if [ -n "$requested" ]; then
+            version="$requested"
+          else
+            IFS=. read -r major minor _ <<<"$latest"
+            version="$major.$((minor + 1)).0"
+          fi
+
+          if ! [[ "$version" =~ $semver ]]; then
+            echo "::error::\"$version\" is not a version like 1.2.3."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::v$version is already released. Pick a newer version."
+            exit 1
+          fi
+          key() { IFS=. read -r a b c <<<"$1"; printf '%06d%06d%06d' "$a" "$b" "$c"; }
+          if ! [[ "$(key "$version")" > "$(key "$latest")" ]]; then
+            echo "::error::$version is not newer than the latest release, $latest."
+            exit 1
+          fi
+
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "Releasing **$version**. The latest release was $latest." >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Import the signing certificate
+        id: signing
+        env:
+          CERTIFICATE: ${{ secrets.SIGNING_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$CERTIFICATE" ]; then
+            echo "::error::Add the SIGNING_CERTIFICATE_P12 and SIGNING_CERTIFICATE_PASSWORD secrets. docs/development.md says how."
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          printf '%s' "$CERTIFICATE" | tr -d '\r\n ' | base64 --decode >"$RUNNER_TEMP/certificate.p12"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          echo "keychain=$keychain" >>"$GITHUB_OUTPUT"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          # The intermediate certificate that Apple Development certificates are issued by.
+          curl -fsSL --retry 3 https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o "$RUNNER_TEMP/AppleWWDRCAG3.cer"
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$keychain" -t cert -A
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -f pkcs12 -P "$CERTIFICATE_PASSWORD" -A
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -F'"' 'NF > 1 { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "::error::The SIGNING_CERTIFICATE_P12 secret holds no valid signing identity."
+            security find-identity -p codesigning "$keychain"
+            exit 1
+          fi
+          echo "Signing as $identity"
+          echo "identity=$identity" >>"$GITHUB_OUTPUT"
+
+      - name: Set the version
+        run: scripts/set-version.sh "${{ steps.version.outputs.version }}"
+
+      - name: Test
+        run: |
+          xcodebuild -version
+          xcodebuild -project AIUsageTracker.xcodeproj -scheme AIUsageTracker \
+            -derivedDataPath build/DerivedData test
+
+      - name: Build and zip the app
+        env:
+          SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: scripts/release.sh "${{ steps.version.outputs.version }}"
+
+      - name: Commit, tag and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add project.yml App/Info.plist
+          git commit -m "Release $VERSION"
+          git tag -a "v$VERSION" -m "AI Usage Tracker $VERSION"
+          # Both or neither: if main moved during the run, nothing is pushed and nothing is released.
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+
+          zip=build/release/AIUsageTracker.zip
+          cat >"$RUNNER_TEMP/notes.md" <<'EOF'
+          ## Install
+
+          Open the zip, drag `AIUsageTracker.app` into `/Applications`, then right-click it and choose **Open** (twice) the first time. Or, from Terminal:
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/scripts/install.sh | bash
+          ```
+
+          To quit it, right-click the strip or a panel and choose **Quit**.
+
+          ## Requires
+
+          macOS 26 or later.
+
+          EOF
+          echo "SHA-256 of \`AIUsageTracker.zip\`: \`$(shasum -a 256 "$zip" | cut -d ' ' -f 1)\`" >>"$RUNNER_TEMP/notes.md"
+
+          gh release create "v$VERSION" "$zip" --verify-tag \
+            --title "AI Usage Tracker $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
+          echo "Released [v$VERSION]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/v$VERSION)." >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the signing keychain
+        if: always() && steps.signing.outputs.keychain != ''
+        run: security delete-keychain "${{ steps.signing.outputs.keychain }}"
