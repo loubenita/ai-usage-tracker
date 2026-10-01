@@ -242,6 +242,90 @@ struct UsagePanelPresenterTests {
         #expect(model.whereRows.map(\.time) == ["2h 38m", "1h 32m", "1h 20m", "30m"])
     }
 
+    // MARK: - Kiro: credits and no tokens
+
+    // Tuesday 22 September 2026, 15:00 in London, so the replies below fall on today.
+    var kiroNow: Date { Date(timeIntervalSince1970: 1_790_085_600) }
+
+    /// Kiro replies as a current build writes them: credits, a model of each reply's own, tool
+    /// calls and no tokens. The latest reply that says how full the context is puts it at 126k
+    /// of a million; the newest reply says nothing.
+    var kiroTurns: [Turn] {
+        func reply(
+            _ id: String, _ model: ModelName, minutesAgo: Double, credits: Double, toolCalls: Int,
+            context: ContextUsage?
+        ) -> Turn {
+            Turn(
+                id: id, timestamp: kiroNow - minutesAgo * 60, agent: .kiro, sessionID: "k", model: model,
+                work: Work(tag: WorkTag(project: "shop", concern: "main")), tokens: nil, cost: Cost(usd: nil),
+                context: context, credits: credits, toolCalls: toolCalls
+            )
+        }
+        return [
+            reply("1", "auto", minutesAgo: 30, credits: 10, toolCalls: 4,
+                  context: ContextUsage(used: 50_000, window: 1_000_000)),
+            reply("2", "claude-opus-4.8", minutesAgo: 20, credits: 60, toolCalls: 3,
+                  context: ContextUsage(used: 125_619, window: 1_000_000)),
+            reply("3", "auto", minutesAgo: 15, credits: 2.5, toolCalls: 1, context: nil),
+        ]
+    }
+
+    /// A Claude reply with tokens and a context of its own, so the table has two agents.
+    var claudeTurn: Turn {
+        Turn(
+            id: "c1", timestamp: kiroNow - 1_800, agent: .claudeCode, sessionID: "c", model: "claude-opus-5",
+            work: Work(tag: WorkTag(project: "app", concern: "main")), tokens: TokenUsage(input: 1_000),
+            cost: Cost(usd: 2), context: ContextUsage(used: 80_000, window: 200_000)
+        )
+    }
+
+    @Test func anAgentWithNoTokensButAContextShowsItAsAnEstimateInsteadOfNotAvailable() throws {
+        let report = usageReport(now: kiroNow, turns: [claudeTurn] + kiroTurns)
+        let model = try all(report)
+        let kiro = try #require(model.rows.first { $0.agent == .kiro })
+        // 125,619 tokens of the million, said as an estimate and marked, never as tokens used.
+        #expect(kiro.tokens == "ctx ~126k")
+        #expect(kiro.tokensIsEstimate)
+        #expect(kiro.spend == "72.5 cr")
+        // Claude has tokens, so its context never replaces them.
+        let claude = try #require(model.rows.first { $0.agent == .claudeCode })
+        #expect(claude.tokens == "1k")
+        #expect(!claude.tokensIsEstimate)
+    }
+
+    @Test func theTotalRowLeavesTheContextEstimateOut() throws {
+        let report = usageReport(now: kiroNow, turns: [claudeTurn] + kiroTurns)
+        let total = try #require(try all(report).total)
+        // Only Claude's measured tokens and cost are added up.
+        #expect(total.tokens == "1k")
+        #expect(!total.tokensIsEstimate)
+        #expect(total.spend == "$2.00")
+        // Kiro alone with Claude gone: one agent needs no total, and its cell is still the estimate.
+        let alone = try all(usageReport(now: kiroNow, turns: kiroTurns))
+        #expect(alone.total == nil)
+        #expect(alone.rows.map(\.tokens) == ["ctx ~126k"])
+    }
+
+    @Test func kiroModelsShowTheirCreditsAndTheCreditsStatComesFirst() throws {
+        let kiro = try agent(usageReport(now: kiroNow, turns: kiroTurns), .kiro, .today)
+        // 60 of 72.5 credits were Opus's. Models are named as the agent names them: "auto".
+        #expect(kiro.models == [
+            ModelShareRowModel(name: "Opus 4.8", percent: "83%", credits: "60 cr"),
+            ModelShareRowModel(name: "auto", percent: "17%", credits: "12.5 cr"),
+        ])
+        #expect(kiro.stats == [
+            StatModel(label: "Credits", value: "72.5 cr"), StatModel(label: "Time", value: "5m"),
+            StatModel(label: "Sessions", value: "1"), StatModel(label: "Prompts", value: "3"),
+            StatModel(label: "Tool calls", value: "8"),
+        ])
+    }
+
+    @Test func modelsOfAnAgentThatBillsNoCreditsShowNone() throws {
+        let claude = try agent(usageReport(now: kiroNow, turns: [claudeTurn]), .claudeCode, .today)
+        #expect(claude.models.map(\.credits) == [nil])
+        #expect(!claude.stats.contains { $0.label == "Credits" })
+    }
+
     @Test func theHeadlineSaysWhenALimitHasRunOut() {
         let now = Date(timeIntervalSince1970: 1_790_000_000)
         let full = LimitReport(

@@ -91,9 +91,13 @@ public struct UsagePanelPresenter: Sendable {
             let used = usage?.usage(of: agent)
             let time = workingTime(used, agent: agent, report: report)
             guard used != nil || time > 0 else { return nil }
+            let tokens = used?.tokens.map(format.tokens)
+            // An agent with no tokens but a context reading shows how full its context is, marked
+            // as an estimate, in place of "n/a". It is not tokens used, so no total adds it up.
+            let estimate = tokens == nil ? used?.context.map(contextEstimate) : nil
             return AgentTableRowModel(
-                agent: agent, name: agent.displayName, time: timeText(time), tokens: used?.tokens.map(format.tokens),
-                spend: spend(used)
+                agent: agent, name: agent.displayName, time: timeText(time), tokens: tokens ?? estimate,
+                spend: spend(used), tokensIsEstimate: tokens == nil && estimate != nil
             )
         }
         let used = agents.compactMap { usage?.usage(of: $0) }
@@ -253,8 +257,11 @@ public struct UsagePanelPresenter: Sendable {
             $0.limits.standings.isEmpty && currentSnapshot($0.snapshot, now: report.now) == nil
         }.map(\.name)
         let hasTokens = fullUsed?.tokens != nil
-        let models = (usage?.byModel ?? []).prefix(Self.modelRows).map {
-            ModelShareRowModel(name: $0.model.displayName, percent: format.percent($0.share))
+        let models = (usage?.byModel ?? []).prefix(Self.modelRows).map { share in
+            ModelShareRowModel(
+                name: share.model.displayName, percent: format.percent(share.share),
+                credits: share.credits.map(creditsText)
+            )
         }
         return AgentUsageModel(
             agent: agent,
@@ -422,8 +429,9 @@ public struct UsagePanelPresenter: Sendable {
         ].compactMap { $0 }
     }
 
-    /// Time, Sessions, Prompts and Tool calls, for an agent that reports no tokens. An agent
-    /// that records nothing per reply is measured by its open sessions.
+    /// Credits, Time, Sessions, Prompts and Tool calls, for an agent that reports no tokens;
+    /// Credits only for an agent that bills in them. An agent that records nothing per reply is
+    /// measured by its open sessions.
     func activityStats(
         _ used: AgentPeriodUsage?, open: [SessionSummary], report: UsageReport, includesOpenSessions: Bool = true
     ) -> [StatModel] {
@@ -433,6 +441,7 @@ public struct UsagePanelPresenter: Sendable {
         let prompts = recorded ? used?.turnCount ?? 0 : includesOpenSessions ? open.reduce(0) { $0 + $1.turnCount } : 0
         let toolCalls = recorded ? used?.toolCalls : includesOpenSessions ? open.compactMap(\.activity?.toolCalls).reduce(0, +) : nil
         return [
+            used?.credits.map { StatModel(label: "Credits", value: creditsText($0)) },
             time >= 60 ? StatModel(label: "Time", value: format.duration(time)) : nil,
             sessions > 0 ? StatModel(label: "Sessions", value: "\(sessions)") : nil,
             prompts > 0 ? StatModel(label: "Prompts", value: format.grouped(prompts)) : nil,
@@ -501,7 +510,17 @@ public struct UsagePanelPresenter: Sendable {
     /// "$4.20", or credits for an agent that bills in them; nil when neither is reported.
     private func spend(_ used: AgentPeriodUsage?) -> String? {
         if let cost = used?.costUSD { return format.usd(cost) }
-        return used?.credits.map { "\(format.credits($0)) cr" }
+        return used?.credits.map(creditsText)
+    }
+
+    /// "12.4 cr", "3,917 cr".
+    private func creditsText(_ credits: Double) -> String {
+        "\(format.credits(credits)) cr"
+    }
+
+    /// "ctx ~126k": how full the context is now, said as an estimate because it is not tokens used.
+    private func contextEstimate(_ context: ContextUsage) -> String {
+        "ctx ~\(format.tokens(context.used))"
     }
 
     /// The top pieces of work by time, then one row adding up the rest.
