@@ -4,26 +4,37 @@ A small macOS overlay on the right edge of your screen that shows the AI coding 
 
 ## Install
 
-Needs macOS 26 or later.
+Needs macOS 26 or later, on an Apple silicon or Intel Mac.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/scripts/install.sh | bash
 ```
 
-That downloads the [latest release](https://github.com/loubenita/ai-usage-tracker/releases/latest), puts the app in `/Applications` and opens it.
+That downloads the [latest release](https://github.com/loubenita/ai-usage-tracker/releases/latest), puts the app in `/Applications`, clears its download flag and opens it.
 
-Or download `AIUsageTracker.zip` from the [releases page](https://github.com/loubenita/ai-usage-tracker/releases/latest) yourself, unzip it and drag `AIUsageTracker.app` into `/Applications`.
+Or install it by hand:
 
-**macOS will refuse to open a copy you downloaded by hand** — "cannot be opened because Apple cannot check it for malicious software". The app is signed, but with a development certificate rather than one Apple has notarized. Two ways past it:
+1. Download `AIUsageTracker.zip` from the [releases page](https://github.com/loubenita/ai-usage-tracker/releases/latest).
+2. Open the zip and drag `AIUsageTracker.app` into `/Applications`.
+3. Clear the download flag, or macOS will refuse to open the app:
 
-- Right-click the app in `/Applications`, choose **Open**, then **Open** again in the box that appears. macOS remembers after that.
-- Or clear the download flag yourself, which is what the install script does for you:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/AIUsageTracker.app
+   ```
 
-  ```sh
-  xattr -dr com.apple.quarantine /Applications/AIUsageTracker.app
-  ```
+Do the same on each Mac you install it on, and again for each new version you download by hand.
 
 To quit the app, right-click the strip or a panel and choose **Quit**.
+
+### Why the xattr command is needed
+
+- **macOS flags what you download.** A browser, Mail, Messages or AirDrop marks each file it saves with a "quarantine" flag. The flag is an extended attribute named `com.apple.quarantine`, and the app keeps it when you unzip it.
+- **A flagged app must be notarized.** The first time you open a flagged app, macOS's Gatekeeper checks that Apple has notarized it. A notarized app is signed with a Developer ID certificate from Apple's paid Developer Program, then sent to Apple to be scanned.
+- **This app is signed but not notarized.** It is built from this repository by the [Release workflow](.github/workflows/release.yml), without a Developer ID. So Gatekeeper blocks it: "“AIUsageTracker” Not Opened. Apple could not verify “AIUsageTracker” is free of malware…"
+- **`xattr -dr com.apple.quarantine` removes the flag.** `-d` deletes the attribute, and `-r` deletes it from every file inside the app. Without the flag, Gatekeeper does not check the app, and it opens like an app you built yourself. The command changes nothing else: the app itself and Gatekeeper's checks on every other app stay as they are.
+- **Only clear the flag on an app you trust.** The source is all in this repository. Each release's notes give the zip's SHA-256, which you can compare with `shasum -a 256 AIUsageTracker.zip`.
+
+Without Terminal: open the app once and let macOS block it. Then go to **System Settings > Privacy & Security**, scroll down to **Security**, click **Open Anyway** next to AIUsageTracker, and confirm with your password. Since macOS 15, right-clicking the app and choosing **Open** no longer gets past Gatekeeper.
 
 ## What it shows
 
