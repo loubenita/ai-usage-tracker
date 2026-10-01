@@ -2,6 +2,10 @@
 
 A small macOS overlay on the right edge of your screen that shows the AI coding agents running in your terminals: what each session is costing, how full its context is, and which plan limit runs out first. It reads the files Claude Code, Codex, Cursor Agent and Kiro already keep on your Mac, and also lists OpenCode sessions, without usage numbers. It has no Dock icon and no menu bar item. [What's supported](#whats-supported) lists what works for each agent and each terminal, and what does not.
 
+<p align="center">
+  <img src="docs/images/session.png" alt="A Claude Code session's panel, showing its spend, tokens, active time, turns and context, open beside the list of seven running sessions" width="690">
+</p>
+
 ## Install
 
 Needs macOS 26 or later, on an Apple silicon or Intel Mac.
@@ -42,6 +46,14 @@ Without Terminal: open the app once and let macOS block it. Then go to **System 
 
 At rest a rounded glass rail sits just inside the screen's right edge. It shows up to four sessions ranked by known spend, then context use and recent activity, with a "+N" count for the rest. Hold the pointer over it for about a second and the rail widens into a list. Each row shows the agent, task, project and branch when known, active time, and context ring. Full facts stay in the selected session's panel.
 
+<p>
+  <img src="docs/images/rail.png" alt="The rail at rest on the right edge of the desktop: four context rings and a +3 count for three more sessions" width="265" align="top">
+  &nbsp;&nbsp;
+  <img src="docs/images/sessions.png" alt="The rail widened into a list of seven sessions, each with its name, folder, branch, context ring and active time; two rings carry an amber dot" width="250" align="top">
+</p>
+
+The rail at rest, and the same rail widened into the list. Two of the seven sessions are ready for input.
+
 - Each ring fills as that session's context fills, turns red when it is nearly full, and carries its agent's colour.
 - Inside the ring is the current context in use: the number and the fill describe the same reading. Cumulative session tokens stay in the session panel.
 - When the app has no context reading for a session, the ring shows a short code made from the session's name instead, for example `HOME` for a session in your home folder. A Claude Code session has no reading until its first reply, and none again right after `/clear`, which starts a new session. An OpenCode session never has one, and a Kiro session has none while the app cannot find its session file.
@@ -54,6 +66,10 @@ Click a ring.
 
 It shows only the selected session, including a named Claude account when one is known: what it is doing and where it runs, available spend or credits and tokens, active time and turns, and context with when it may be full at this pace. **Show details** reveals readable token categories, model and effort, pace, first ask, tool and file activity, and location. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. Sessions that started sub-agents show their run count, combined tokens, cost, working time and share of session spend in one summary. These runs are already included in the session totals.
 
+<p>
+  <img src="docs/images/session-details.png" alt="A session panel with its details shown: input, output, cache read and cache write tokens, one sub-agent run, pace, model, tool calls, files changed, the first ask, when it started and its branch" width="448">
+</p>
+
 **Open** brings the session's terminal forward, on the exact window or tab where it can. [Terminals and the Open button](#terminals-and-the-open-button) says what it does in each terminal. Where the app can raise the terminal but cannot pick the tab, the button says **Bring forward** instead. The app never types into a terminal. Its action and observed result are written to `~/Library/Application Support/AIUsageTracker/open.log`.
 
 ### Usage
@@ -62,9 +78,25 @@ The button under the strip opens the usage panel: every agent, or one, across To
 
 It opens by naming what runs out first — "Codex runs out first: 5% of its week is left until Thu 06:57" — then lists available limits by provider and Claude account. Each reading has its window, used share, progress bar, and a reset time when the source supplies one. Old account readings are labelled instead of shown as current. Bars turn amber at 85%. Under that: time, tokens and spend for each agent, and where the time went. Picking one agent shows its limits and pace, its numbers, a chart of the period, its models and its work. Today omits weekly limits.
 
+<p>
+  <img src="docs/images/usage-week.png" alt="The usage panel for every agent this week: it opens with &quot;Codex has run out of its week until Sat 21:23&quot;, then Claude and Codex limit bars, time, tokens and spend for each agent, and where the time went" width="380" align="top">
+  &nbsp;
+  <img src="docs/images/usage-today.png" alt="The usage panel for every agent today: Claude's 5-hour limit, today's time, tokens and spend, and where the time went" width="380" align="top">
+</p>
+
+Every agent, this week and today. Codex has used all of its week, so the panel opens by saying when it comes back.
+
 Anything an agent does not report is left out rather than shown as zero; in the table, where the column has to stay for the others, the cell says "n/a".
 
-The pictures show the made-up sessions the app ships with, so no real project appears in this repository. Everything here is run against real sessions too.
+<p>
+  <img src="docs/images/usage-week-claude.png" alt="The usage panel for Claude this week: the week limit, spend, tokens, time, sessions, a chart of tokens per day, the models used and where the time went" width="380" align="top">
+  &nbsp;
+  <img src="docs/images/usage-week-codex.png" alt="The usage panel for Codex this week: the week limit at 100% with when it resets and its pace, tokens, time, sessions, a chart of tokens per day, the models used and where the time went" width="380" align="top">
+</p>
+
+One agent at a time. Codex keeps no prices on the Mac, so its view has no spend.
+
+The pictures were taken on a real Mac on 1 October 2026, with some session and folder names blurred.
 
 ## Claude's limits
 
