@@ -23,6 +23,10 @@ public struct AgentPeriodUsage: Sendable, Hashable {
     public let turnCount: Int
     /// Tools called, when the agent's records say; nil when none of them did.
     public let toolCalls: Int?
+    /// How full the context was at the period's latest reply that said (Kiro: 126k of 1M). It is
+    /// what is in the context now, not tokens used, so it is never added to `tokens` or to any
+    /// total. Nil when no reply in the period said.
+    public let context: ContextUsage?
 }
 
 /// One piece of work's share of the period's working time.
@@ -34,10 +38,13 @@ public struct WorkTime: Sendable, Hashable {
     public let agent: Agent
 }
 
-/// One model's share of the period: of its tokens, or of its time when no tokens are reported.
+/// One model's share of the period: of its tokens; when no model reports tokens, of its credits
+/// (Kiro); and when no model reports credits either, of its working time.
 public struct ModelShare: Sendable, Hashable {
     public let model: ModelName
     public let tokens: Int?
+    /// The credits the model's replies were billed, nil when none of them reported credits.
+    public let credits: Double?
     public let workingTime: TimeInterval
     public let share: Double
 }
@@ -199,7 +206,8 @@ public enum PeriodUsageBuilder {
                 onlyOpenSessions: turns.isEmpty,
                 sessionCount: Set(turns.map(\.sessionID)).count,
                 turnCount: turns.count,
-                toolCalls: turns.contains { $0.toolCalls != nil } ? turns.reduce(0) { $0 + ($1.toolCalls ?? 0) } : nil
+                toolCalls: turns.contains { $0.toolCalls != nil } ? turns.reduce(0) { $0 + ($1.toolCalls ?? 0) } : nil,
+                context: turns.filter { $0.context != nil }.max { $0.timestamp < $1.timestamp }?.context
             )
         }
         .sorted { ($0.workingTime, -rank($0.agent)) > ($1.workingTime, -rank($1.agent)) }
@@ -213,19 +221,33 @@ public enum PeriodUsageBuilder {
             .sorted { ($0.workingTime, $0.tag.concern) > ($1.workingTime, $1.tag.concern) }
     }
 
-    /// Each model's share of the tokens; of the working time when no model reported tokens.
+    /// Each model's share of the tokens; of the credits when no model reported tokens; of the
+    /// working time when no model reported credits either. A model that billed credits but did
+    /// not work for a stretch of time (one reply, say) still has its share of the credits.
     static func modelShares(_ turns: [Turn]) -> [ModelShare] {
         let byModel = Dictionary(grouping: turns, by: \.model).map { model, turns in
-            (model: model, tokens: Breakdown.totalTokens(turns)?.total, time: workingTime(turns))
+            (
+                model: model, tokens: Breakdown.totalTokens(turns)?.total, credits: Breakdown.totalCredits(turns),
+                time: workingTime(turns)
+            )
         }
         let totalTokens = byModel.reduce(0) { $0 + ($1.tokens ?? 0) }
+        let totalCredits = byModel.reduce(0.0) { $0 + ($1.credits ?? 0) }
         let totalTime = byModel.reduce(0) { $0 + $1.time }
         return byModel
             .map { model in
-                let share = totalTokens > 0
-                    ? Double(model.tokens ?? 0) / Double(totalTokens)
-                    : totalTime > 0 ? model.time / totalTime : 0
-                return ModelShare(model: model.model, tokens: model.tokens, workingTime: model.time, share: share)
+                let share: Double
+                if totalTokens > 0 {
+                    share = Double(model.tokens ?? 0) / Double(totalTokens)
+                } else if totalCredits > 0 {
+                    share = (model.credits ?? 0) / totalCredits
+                } else {
+                    share = totalTime > 0 ? model.time / totalTime : 0
+                }
+                return ModelShare(
+                    model: model.model, tokens: model.tokens, credits: model.credits, workingTime: model.time,
+                    share: share
+                )
             }
             .filter { $0.share > 0 }
             .sorted { ($0.share, $0.model.id) > ($1.share, $1.model.id) }

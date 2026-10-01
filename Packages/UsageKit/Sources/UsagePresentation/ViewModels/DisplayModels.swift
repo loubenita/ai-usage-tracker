@@ -174,9 +174,21 @@ public struct AgentTableRowModel: Sendable, Equatable, Identifiable {
     public let agent: Agent?
     public let name: String
     public let time: String
-    /// Nil when the agent reports no tokens: shown as "n/a".
+    /// Nil when the agent reports no tokens and nothing to estimate them from: shown as "n/a".
     public let tokens: String?
     public let spend: String?
+    /// The tokens cell is an estimate, not a count the agent reported: Kiro's "ctx ~126k" says
+    /// how full its context is now. The view draws it faint, and it is never in a total.
+    public let tokensIsEstimate: Bool
+
+    init(agent: Agent?, name: String, time: String, tokens: String?, spend: String?, tokensIsEstimate: Bool = false) {
+        self.agent = agent
+        self.name = name
+        self.time = time
+        self.tokens = tokens
+        self.spend = spend
+        self.tokensIsEstimate = tokensIsEstimate
+    }
 }
 
 /// "MS · Video generation  50%  2h 58m".
@@ -193,6 +205,14 @@ public struct ModelShareRowModel: Sendable, Equatable, Identifiable {
     public var id: String { name }
     public let name: String
     public let percent: String
+    /// "61.7 cr", for an agent that bills in credits; nil otherwise.
+    public let credits: String?
+
+    init(name: String, percent: String, credits: String? = nil) {
+        self.name = name
+        self.percent = percent
+        self.credits = credits
+    }
 }
 
 public struct ChartBarModel: Sendable, Equatable, Identifiable {
