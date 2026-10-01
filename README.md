@@ -1,6 +1,6 @@
 # AI Usage Tracker
 
-A small macOS overlay on the right edge of your screen that shows the AI coding agents running in your terminals: what each session is costing, how full its context is, and which plan limit runs out first. It reads the files Claude Code, Codex, Cursor Agent and Kiro already keep on your Mac. It has no Dock icon and no menu bar item.
+A small macOS overlay on the right edge of your screen that shows the AI coding agents running in your terminals: what each session is costing, how full its context is, and which plan limit runs out first. It reads the files Claude Code, Codex, Cursor Agent and Kiro already keep on your Mac, and also lists OpenCode sessions, without usage numbers. It has no Dock icon and no menu bar item. [What's supported](#whats-supported) lists what works for each agent and each terminal, and what does not.
 
 ## Install
 
@@ -44,6 +44,7 @@ At rest a rounded glass rail sits just inside the screen's right edge. It shows 
 
 - Each ring fills as that session's context fills, turns red when it is nearly full, and carries its agent's colour.
 - Inside the ring is the current context in use: the number and the fill describe the same reading. Cumulative session tokens stay in the session panel.
+- When the app has no context reading for a session, the ring shows a short code made from the session's name instead, for example `HOME` for a session in your home folder. A Claude Code session has no reading until its first reply, and none again right after `/clear`, which starts a new session. An OpenCode session never has one, and a Kiro session has none while the app cannot find its session file.
 - An amber dot means the last agent turn finished and the session is ready for input. The app cannot tell who should respond next.
 - Drag the visible handle at the top of the rail to move it up or down. It becomes compact while moving and stays where you drop it. Scrolling the session rows does not move the overlay.
 
@@ -53,7 +54,7 @@ Click a ring.
 
 It shows only the selected session, including a named Claude account when one is known: what it is doing and where it runs, available spend or credits and tokens, active time and turns, and context with when it may be full at this pace. **Show details** reveals readable token categories, model and effort, pace, first ask, tool and file activity, and location. Input means new uncached text; cache read is context reused from earlier turns, so it can be much larger. Sessions that started sub-agents show their run count, combined tokens, cost, working time and share of session spend in one summary. These runs are already included in the session totals.
 
-**Open** selects the existing tab and session in Terminal or iTerm by its TTY. Warp sessions open their exact tab through the `warp://session` link that Warp gives each tab. Warp puts that link in the environment of every process started in the tab, under the name `WARP_FOCUS_URL`, and the app reads it from the session's process. Only a link of exactly that shape is ever opened. For tmux, it selects the session's pane in an attached tmux client, and brings forward the window that client really runs in, which it works out from the client's own process each time, because one tmux server can be shown in several terminals at once. tmux shown in Terminal or iTerm brings that exact window and tab forward by its TTY, and tmux shown in Warp brings its tab forward. A tmux session shown inside a pane of another tmux session is selected there too: the outer session is switched to that pane, so the session you asked for is the one in view, and the window brought forward is the one of the outermost client. This also covers one tmux session shown in a single tab with other sessions attached in its panes as watchers. A Warp link is only trusted from a process Warp started, because Warp copies the link into everything started from a tab: a Terminal window opened from a Warp tab, or a tmux server first started in one, carries the link of that tab without being in it. Ghostty sessions, and Warp sessions whose tab link cannot be read, say **Bring forward**: the app can raise the terminal, but cannot select an exact tab there. The app never types into a terminal. Its action and observed result are written to `~/Library/Application Support/AIUsageTracker/open.log`.
+**Open** brings the session's terminal forward, on the exact window or tab where it can. [Terminals and the Open button](#terminals-and-the-open-button) says what it does in each terminal. Where the app can raise the terminal but cannot pick the tab, the button says **Bring forward** instead. The app never types into a terminal. Its action and observed result are written to `~/Library/Application Support/AIUsageTracker/open.log`.
 
 ### Usage
 
@@ -77,17 +78,51 @@ For multiple Claude accounts, set this status line in each account's `settings.j
 
 Until then Usage explains how to turn on Claude limits and leaves out empty limit bars. No login, token or Keychain item is involved anywhere in the app. If you already have a status line, set `AIUT_STATUSLINE_NEXT` to its command and the script prints that instead of its own.
 
-## What each agent gives
+## What's supported
 
-| | Claude Code | Codex | Cursor Agent | Kiro CLI | Antigravity |
-|---|---|---|---|---|---|
-| Ring colour | The text colour | Light grey | Blue | Violet | Unavailable today |
-| Context and tokens | Yes | Yes | Context only: Cursor keeps no token count | Context only: current Kiro builds write every token count as 0 | No: its conversations are encrypted |
-| Cost | Yes, at API list prices | No prices available | Billed by plan | Billed in credits | No |
-| Plan limits | 5-hour and weekly, [with the status line](#claudes-limits) | 5-hour and weekly when present in its own files | No | This month's credits, by asking `kiro-cli` | No |
-| Counted in Today, Week and Month | Yes, sub-agents included | Yes | No history; live context and prompts only | Yes, in credits | No |
+### Agents
 
-Antigravity runs as a desktop app rather than in a terminal and encrypts what it saves, so it cannot be tracked. Kiro's session fields were checked against a file from a real Kiro install. Its plan output, read by asking `kiro-cli`, has not been checked against a live run.
+The app finds an agent by its program name in your Mac's list of running processes, such as `claude` or `codex`, then reads the files that agent keeps.
+
+| | Claude Code | Codex | Cursor Agent | Kiro CLI | OpenCode | Antigravity |
+|---|---|---|---|---|---|---|
+| Listed while it runs | Yes | Yes | Yes | Yes | Yes | No |
+| Ring colour | The text colour | Light grey | Blue | Violet | Yellow | Unavailable today |
+| Context and tokens | Yes | Yes | Context only: Cursor keeps no token count | Context only: current Kiro builds write every token count as 0 | No: the ring shows a code | No: its conversations are encrypted |
+| Cost | Yes, at API list prices | No prices available | Billed by plan | Billed in credits | No | No |
+| Plan limits | 5-hour and weekly, [with the status line](#claudes-limits) | 5-hour and weekly when present in its own files | No | This month's credits, by asking `kiro-cli` | No | No |
+| Counted in Today, Week and Month | Yes, sub-agents included | Yes | No history; live context and prompts only | Yes, in credits | No | No |
+
+- **OpenCode** sessions are listed with their terminal, folder, project and branch only. The app reads none of OpenCode's own files, so it has no model, tokens, cost or history for them.
+- **Antigravity** runs as a desktop app rather than in a terminal and encrypts what it saves, so it cannot be tracked.
+- **Kiro**'s session fields were checked against a file from a real Kiro install. Its plan output, read by asking `kiro-cli`, has not been checked against a live run.
+
+Not supported for any agent:
+
+- **Agents on another computer**, for example one you reach over SSH. The app reads only this Mac's running processes and files.
+- **Names the agent makes up.** A session's title in the strip is the name you gave it. Without one, it is the branch in words, so `feat/session-detection` reads "Session detection", or the folder name on a main branch such as `main` or `develop`. A title Claude Code writes for itself, such as "Paper design overhaul", is not used.
+- **Windows and Linux.** The app runs on macOS only.
+
+### Terminals and the Open button
+
+The session panel's **Open** button brings forward the terminal an agent runs in. A TTY, below, is the terminal device an agent reads and writes, such as `/dev/ttys004`: each tab has its own.
+
+| Where the agent runs | What Open does | How it was checked |
+|---|---|---|
+| Terminal | Selects the window and tab with the session's TTY, and brings Terminal forward | On a real Mac |
+| iTerm | Selects the window, tab and split pane with the session's TTY | Automated tests only |
+| Warp | Opens the session's own tab, through the link Warp gives each tab | On a real Mac |
+| Ghostty | Brings Ghostty forward. The button says **Bring forward**, since Ghostty offers no way to pick a tab | Automated tests only |
+| tmux, shown in any of the above | Switches a tmux client to the session's window and pane, then brings forward the window or tab that client runs in: Terminal and iTerm by the client's TTY, Warp by the client's tab link | On a real Mac, in Terminal and Warp |
+| tmux, shown inside another tmux session | Also switches the outer session to the pane that shows it, outward up to 4 levels, then brings forward the outermost client's window | On a real Mac |
+| Any other terminal, such as kitty, Alacritty, WezTerm or an editor's built-in terminal | Nothing: the session is listed, with no Open button | |
+| No terminal, such as a session an agent runs in the background | Nothing: the session is listed, with no Open button | |
+
+- **Warp's tab link.** Warp puts each tab's link in the environment of every process started in that tab, under the name `WARP_FOCUS_URL`, for example `warp://session/0123456789abcdef0123456789abcdef`. The app reads it from the session's process. Only a link of exactly that shape is ever opened. When the link cannot be read, the button says **Bring forward** and Warp only comes forward.
+- **A Warp link is only trusted from a process Warp started.** Warp copies the link into everything started from a tab. So a Terminal window opened from a Warp tab, or a tmux server first started in one, carries the link of that tab without being in it.
+- **tmux in several terminals.** One tmux server can be shown in several terminals at once. So the window to bring forward is worked out from the tmux client's own process each time Open is clicked.
+- **tmux inside tmux.** This covers one tmux session shown in a single tab, with other sessions attached in its windows as watchers. Open on a watched session switches the outer session to that watcher's window, so the session you asked for is the one in view.
+- **The real-Mac checks** ran on 1 October 2026 with real Claude Code, Codex and Cursor Agent sessions, with another window or app in front each time.
 
 ## More
 
