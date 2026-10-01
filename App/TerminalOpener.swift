@@ -61,9 +61,10 @@ struct TerminalOpener: SessionOpening {
                 }
             }
             // What each client that was switched is looking at afterwards, so the log shows
-            // whether the switch really happened. Without naming the client, tmux answers for
-            // another one. With sessions shown inside each other the last one is the outermost
-            // client, the one in the terminal tab.
+            // whether the switch really happened. Each client's own line of `list-clients` is
+            // read: `display-message -c` answers for the most recently used client, whichever is
+            // named. With sessions shown inside each other the last one is the outermost client,
+            // the one in the terminal tab.
             if origin.terminal == .tmux {
                 let location = TerminalFocus.location(for: origin, panes: panes).location
                 guard let session = location?.session else { return }
@@ -72,10 +73,11 @@ struct TerminalOpener: SessionOpening {
                     log.write("tmux: no attached client can show \(session)")
                     return
                 }
+                let shown = Self.run("tmux", ["list-clients", "-F", "#{client_tty}\t#S:#I.#P"], log: log).output
+                    .split(separator: "\n")
                 for tty in switched {
-                    let arguments = ["display-message", "-p", "-c", tty, "#S:#I.#P"]
-                    let now = Self.run("tmux", arguments, log: log).output.trimmingCharacters(in: .whitespacesAndNewlines)
-                    log.write("\(tty) is now on \(now)")
+                    let line = shown.first { $0.hasPrefix(tty + "\t") }
+                    log.write("\(tty) is now on " + (line.map { String($0.dropFirst(tty.count + 1)) } ?? "nothing: tmux no longer lists it"))
                 }
             }
         }
