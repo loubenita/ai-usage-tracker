@@ -26,6 +26,8 @@ public struct FakeUsageRepository: UsageRepository {
             limits: all.limits.filter { inRange($0.timestamp) },
             sessionEvents: sized(all.sessionEvents).filter { inRange($0.timestamp) },
             capturedAt: all.capturedAt,
+            // Not cut to the range: the real cache keeps each account's latest reading for a week.
+            accountSnapshots: all.accountSnapshots,
             usualRates: all.usualRates
         )
     }

@@ -74,6 +74,7 @@ struct FakeUsageData {
             limits: limits(),
             sessionEvents: sessionEvents(),
             capturedAt: now,
+            accountSnapshots: accountSnapshots(),
             usualRates: [.claudeCode: Self.usualRate]
         )
     }
@@ -285,7 +286,8 @@ struct FakeUsageData {
     private func limits() -> [LimitReading] {
         let fiveHourReset = at(dayOffset: 0, 16, 40)
         let weeklyReset = at(dayOffset: 3, 9, 0)      // Thursday 24 September, 09:00
-        let codexReset = at(dayOffset: 3, 6, 57)      // Thursday 24 September, 06:57
+        // Codex's week reset at 12:32, two hours before now, and nothing has been read since.
+        let codexReset = at(dayOffset: 0, 12, 32)
         return [
             // 33% a day ago and 48% now: 15 points a day.
             LimitReading(timestamp: at(dayOffset: -1, 14, 32), agent: .claudeCode, plan: "max", windows: [
@@ -299,9 +301,29 @@ struct FakeUsageData {
                 LimitWindowReading(kind: .fiveHour, usedPercent: 62, resetsAt: fiveHourReset),
                 LimitWindowReading(kind: .weekly, usedPercent: 48, resetsAt: weeklyReset),
             ]),
-            LimitReading(timestamp: now, agent: .codex, plan: "plus", windows: [
+            // 95% at noon, half an hour before the window reset: the last weekly reading Codex has.
+            LimitReading(timestamp: at(dayOffset: 0, 12, 0), agent: .codex, plan: "plus", windows: [
                 LimitWindowReading(kind: .weekly, usedPercent: 95, resetsAt: codexReset),
             ]),
+        ]
+    }
+
+    // MARK: - Claude accounts
+
+    /// What the owner's status line saves for two Claude accounts, which is only percentages and
+    /// when they were read, with no reset time. The first account was read three minutes ago. The
+    /// second is at its weekly limit, so it has no sessions to refresh it: its reading is four
+    /// hours old.
+    private func accountSnapshots() -> [AccountUsageSnapshot] {
+        [
+            AccountUsageSnapshot(
+                id: "/Users/me/.claude", name: "Default", agent: .claudeCode,
+                readAt: now.addingTimeInterval(-3 * 60), fiveHourPercent: 9, weeklyPercent: 95
+            ),
+            AccountUsageSnapshot(
+                id: "/Users/me/.claude-second", name: "Second", agent: .claudeCode,
+                readAt: now.addingTimeInterval(-4 * 3600), fiveHourPercent: 0, weeklyPercent: 100
+            ),
         ]
     }
 
