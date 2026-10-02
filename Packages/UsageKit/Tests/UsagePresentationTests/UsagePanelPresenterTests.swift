@@ -56,6 +56,50 @@ struct UsagePanelPresenterTests {
 
     enum Failure: Error { case wrongView }
 
+    /// The made-up month before any Claude account saved a cache, so that Claude's own 62% and
+    /// 48% are the limits the panels show for Claude.
+    static func fakeReportWithoutAccounts() async throws -> UsageReport {
+        let calendar = OverlayPresenterTests.calendar
+        let repository = FakeUsageRepository(calendar: calendar)
+        let generate = GenerateUsageReport(settings: try await repository.settings(), calendar: calendar)
+        let range = generate.recordRange(endingAt: repository.anchor)
+        let all = try await repository.records(from: range.start, to: range.end)
+        let records = UsageRecords(
+            turns: all.turns, limits: all.limits, sessionEvents: all.sessionEvents, capturedAt: all.capturedAt,
+            usualRates: all.usualRates
+        )
+        return generate(records, now: repository.anchor)
+    }
+
+    /// Monday 21 September 2026, 15:13 in London.
+    let readingNow = Date(timeIntervalSince1970: 1_790_000_000)
+
+    /// A report at `now` made only from account caches, status-line readings and open sessions.
+    func accountReport(
+        snapshots: [AccountUsageSnapshot] = [], limits: [LimitReading] = [], sessions: [SessionEvent] = [],
+        now: Date
+    ) -> UsageReport {
+        GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
+            calendar: calendar
+        )(
+            UsageRecords(
+                turns: [], limits: limits, sessionEvents: sessions, capturedAt: now, accountSnapshots: snapshots
+            ),
+            now: now
+        )
+    }
+
+    func cache(
+        _ id: String, _ name: String, readAt: Date, fiveHour: Double?, weekly: Double?,
+        fiveHourResetsAt: Date? = nil, weeklyResetsAt: Date? = nil
+    ) -> AccountUsageSnapshot {
+        AccountUsageSnapshot(
+            id: id, name: name, agent: .claudeCode, readAt: readAt, fiveHourPercent: fiveHour, weeklyPercent: weekly,
+            fiveHourResetsAt: fiveHourResetsAt, weeklyResetsAt: weeklyResetsAt
+        )
+    }
+
     // MARK: - The picker
 
     @Test func thePickerListsAllThenEachAgentWithData() async throws {
@@ -82,11 +126,11 @@ struct UsagePanelPresenterTests {
     }
 
     @Test func eachPeriodShowsOnlyItsOwnLimit() async throws {
-        let report = try await OverlayPresenterTests.fakeReport()
+        let report = try await Self.fakeReportWithoutAccounts()
 
         #expect(try all(report, .today).limits.map(\.name) == ["Claude 5-hour"])
-        // Week: the weekly limit only, never the 5-hour window.
-        #expect(try all(report, .week).limits.map(\.name) == ["Claude week", "Codex week"])
+        // Week: the weekly limit only, never the 5-hour window. Codex's week reset at 12:32.
+        #expect(try all(report, .week).limits.map(\.name) == ["Claude week", "Codex week limit reset"])
         #expect(try agent(report, .claudeCode, .week).limits.map(\.title) == ["Week limit 48%"])
         // Month: neither rolling limit; the month's spend and tokens remain.
         let month = try agent(report, .claudeCode, .month)
@@ -108,18 +152,17 @@ struct UsagePanelPresenterTests {
     }
 
     @Test func accountPercentagesFollowThePeriodToo() {
-        let snapshot = AccountUsageSnapshot(
-            id: "/Users/me/.claude", name: "Default", agent: .claudeCode, readAt: .now,
-            fiveHourPercent: 11, weeklyPercent: 18
-        )
-        let presenter = UsagePanelPresenter(formatter: UsageFormatter(calendar: .current))
-        #expect(presenter.snapshotValues(snapshot, period: .today).map(\.0) == ["5-hour"])
-        #expect(presenter.snapshotValues(snapshot, period: .week).map(\.0) == ["week"])
-        #expect(presenter.snapshotValues(snapshot, period: .month).isEmpty)
+        let snapshot = cache("/Users/me/.claude", "Default", readAt: readingNow, fiveHour: 11, weekly: 18)
+        let windows = { (period: UsagePeriod) in
+            presenter.lastWindows(.none, snapshot: snapshot, period: period, now: readingNow).map(\.kind)
+        }
+        #expect(windows(.today) == [.fiveHour])
+        #expect(windows(.week) == [.weekly])
+        #expect(windows(.month).isEmpty)
     }
 
     @Test func todayExcludesWeeklyLimitsWhileWeekIncludesThem() async throws {
-        let report = try await OverlayPresenterTests.fakeReport()
+        let report = try await Self.fakeReportWithoutAccounts()
 
         let today = try all(report, .today)
         #expect(today.limits.map(\.name) == ["Claude 5-hour"])
@@ -128,73 +171,222 @@ struct UsagePanelPresenterTests {
         #expect(try agent(report, .codex, .today).limits.isEmpty)
 
         let week = try all(report, .week)
-        #expect(week.limits.map(\.name) == ["Claude week", "Codex week"])
+        #expect(week.limits.map(\.name) == ["Claude week", "Codex week limit reset"])
         #expect(try agent(report, .claudeCode, .week).limits.map(\.title) == ["Week limit 48%"])
     }
 
-    @Test func twoClaudeAccountsShowOnlyCurrentPercentagesAndTruthfulResetAvailability() throws {
-        let now = Date(timeIntervalSince1970: 1_790_000_000)
-        let snapshots = [
-            AccountUsageSnapshot(
-                id: "/profiles/work", name: "Work", agent: .claudeCode, readAt: now,
-                fiveHourPercent: 20, weeklyPercent: 40
-            ),
-            AccountUsageSnapshot(
-                id: "/profiles/personal", name: "Personal", agent: .claudeCode,
-                readAt: now - 3600, fiveHourPercent: 80, weeklyPercent: 90
-            )
-        ]
-        let records = UsageRecords(
-            turns: [], limits: [], sessionEvents: [], capturedAt: now, accountSnapshots: snapshots
-        )
-        let report = GenerateUsageReport(
-            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
-            calendar: calendar
-        )(records, now: now)
+    // MARK: - The last reading, however old
+
+    @Test func twoClaudeAccountsShowTheirLastReadingWhateverItsAge() throws {
+        let now = readingNow
+        let report = accountReport(snapshots: [
+            cache("/profiles/work", "Work", readAt: now, fiveHour: 20, weekly: 40),
+            cache("/profiles/personal", "Personal", readAt: now - 3600, fiveHour: 80, weekly: 90),
+        ], now: now)
+
+        // Accounts are listed by their folder, so Personal comes first. Neither cache has a reset time.
         let overview = try all(report)
-        #expect(overview.limits.count == 2)
-        #expect(overview.limits.map(\.name).contains("Claude · Personal"))
-        #expect(overview.limits.first { $0.name == "Claude · Personal" }?.freesUp == "No recent limit reading")
-        #expect(overview.limits.first { $0.name == "Claude · Work 5-hour" }?.used == "20%")
-        #expect(overview.limits.first { $0.name == "Claude · Work 5-hour" }?.freesUp.hasPrefix("Reset time unavailable · read ") == true)
+        #expect(overview.limits.map(\.name) == ["Claude · Personal 5-hour", "Claude · Work 5-hour"])
+        #expect(overview.limits.map(\.used) == ["80%", "20%"])
+        #expect(overview.limits.map(\.freesUp) == [
+            "Reset time unknown · read 14:13", "Reset time unknown · read 15:13",
+        ])
         let claude = try agent(report, .claudeCode, .today)
-        #expect(claude.limits.map(\.title) == ["Work · 5-hour limit 20%"])
-        #expect(claude.limits.first?.detail.hasPrefix("Reset time unavailable · read ") == true)
-        #expect(claude.note == NoteModel(
-            title: "Limit reading unavailable",
-            text: "No recent limit reading for Personal. Cached percentages older than 15 minutes are hidden."
-        ))
+        #expect(claude.limits.map(\.title) == ["Personal · 5-hour limit 80%", "Work · 5-hour limit 20%"])
+        #expect(claude.limits.map(\.detail) == ["Reset time unknown · read 14:13", "Reset time unknown · read 15:13"])
+        // Both accounts have a reading, so there is nothing to say is missing.
+        #expect(claude.note?.title != "Limit reading unavailable")
 
         let week = try all(report, .week)
-        #expect(week.limits.first { $0.name == "Claude · Work week" }?.used == "40%")
-        #expect(week.limits.first { $0.name == "Claude · Work week" }?.freesUp.hasPrefix("Reset time unavailable · read ") == true)
+        #expect(week.limits.map(\.name) == ["Claude · Personal week", "Claude · Work week"])
+        #expect(week.limits.map(\.used) == ["90%", "40%"])
+        #expect(week.limits.map(\.isNearlyUsed) == [true, false])
     }
 
-    @Test func staleSnapshotAtAResetDoesNotClaimEitherEndOfTheOldPercentage() throws {
-        let now = Date(timeIntervalSince1970: 1_790_000_000)
+    @Test func anOldReadingAtEitherEndIsShownAsReadNeverAsCurrent() throws {
         for percentage in [0.0, 100.0] {
-            let snapshot = AccountUsageSnapshot(
-                id: "/profiles/personal", name: "Personal", agent: .claudeCode,
-                readAt: now - 27 * 60, fiveHourPercent: percentage, weeklyPercent: percentage
-            )
-            let records = UsageRecords(
-                turns: [], limits: [], sessionEvents: [], capturedAt: now, accountSnapshots: [snapshot]
-            )
-            let report = GenerateUsageReport(
-                settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20),
-                calendar: calendar
-            )(records, now: now)
+            let report = accountReport(snapshots: [
+                cache("/profiles/personal", "Personal", readAt: readingNow - 27 * 60, fiveHour: percentage, weekly: percentage),
+            ], now: readingNow)
 
-            let today = try all(report)
-            #expect(today.limits == [
-                LimitListRowModel(
-                    id: "claude-code-/profiles/personal-none", agent: .claudeCode, name: "Claude · Personal",
-                    fraction: nil, used: "", freesUp: "No recent limit reading", isNearlyUsed: false
-                )
-            ])
-            #expect(try agent(report, .claudeCode, .today).limits.isEmpty)
-            #expect(try agent(report, .claudeCode, .today).note?.title == "Limit reading unavailable")
+            let row = try #require(try all(report).limits.first)
+            #expect(row.name == "Claude · Personal 5-hour")
+            #expect(row.fraction == percentage / 100)
+            #expect(row.used == "\(Int(percentage))%")
+            #expect(row.freesUp == "Reset time unknown · read 14:46")
+            #expect(row.isNearlyUsed == (percentage >= 85))
+            let claude = try agent(report, .claudeCode, .today)
+            #expect(claude.limits.map(\.title) == ["Personal · 5-hour limit \(Int(percentage))%"])
+            #expect(claude.limits.map(\.detail) == ["Reset time unknown · read 14:46"])
+            #expect(claude.note?.title != "Limit reading unavailable")
         }
+    }
+
+    @Test func aReadingWithAFutureResetSaysWhenItResetsAndHowOldItIs() throws {
+        // Read at 11:13, at its weekly limit, with the week resetting on Wednesday at 17:13.
+        let now = readingNow
+        let report = accountReport(snapshots: [
+            cache("/profiles/second", "Second", readAt: now - 4 * 3600, fiveHour: 0, weekly: 100,
+                  weeklyResetsAt: now + 2 * 86_400 + 2 * 3600),
+        ], now: now)
+
+        #expect(try agent(report, .claudeCode, .week).limits == [BarRowModel(
+            title: "Second · Week limit 100%", detail: "Resets Wed 17:13 · in 2d 2h · read 11:13",
+            fraction: 1, highlightFraction: nil, isNearlyUsed: true, note: nil
+        )])
+        let row = try #require(try all(report, .week).limits.first)
+        #expect(row.name == "Claude · Second week")
+        #expect(row.fraction == 1)
+        #expect(row.used == "100%")
+        #expect(row.freesUp == "Resets Wed 17:13 · in 2d 2h · read 11:13")
+        #expect(row.isNearlyUsed)
+        // The 5-hour percentage of the same cache has no reset time of its own.
+        #expect(try agent(report, .claudeCode, .today).limits == [BarRowModel(
+            title: "Second · 5-hour limit 0%", detail: "Reset time unknown · read 11:13",
+            fraction: 0, highlightFraction: nil, isNearlyUsed: false, note: nil
+        )])
+    }
+
+    @Test func aReadingWhoseResetHasPassedSaysItResetAndIsNotAmber() throws {
+        let now = readingNow
+        let report = accountReport(snapshots: [
+            cache("/profiles/second", "Second", readAt: now - 2 * 86_400, fiveHour: 96, weekly: 100,
+                  fiveHourResetsAt: now - 2 * 3600, weeklyResetsAt: now - 86_400),
+        ], now: now)
+
+        #expect(try agent(report, .claudeCode, .week).limits == [BarRowModel(
+            title: "Second · Week limit reset", detail: "Reset Sun 15:13 · no reading since",
+            fraction: 0, highlightFraction: nil, isNearlyUsed: false, note: nil
+        )])
+        #expect(try agent(report, .claudeCode, .today).limits == [BarRowModel(
+            title: "Second · 5-hour limit reset", detail: "Reset 13:13 · no reading since",
+            fraction: 0, highlightFraction: nil, isNearlyUsed: false, note: nil
+        )])
+        let week = try #require(try all(report, .week).limits.first)
+        #expect(week.name == "Claude · Second week limit reset")
+        #expect(week.fraction == 0)
+        #expect(week.used == "")
+        #expect(week.freesUp == "Reset Sun 15:13 · no reading since")
+        #expect(!week.isNearlyUsed)
+        let today = try #require(try all(report).limits.first)
+        #expect(today.name == "Claude · Second 5-hour limit reset")
+        #expect(today.freesUp == "Reset 13:13 · no reading since")
+        #expect(!today.isNearlyUsed)
+    }
+
+    @Test func theLaterOfAnAccountCacheAndAResetWindowIsWhatIsShown() {
+        let now = readingNow
+        let reset = ResetWindow(kind: .weekly, resetsAt: now - 86_400, readAt: now - 2 * 86_400)
+        let limits = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil, resetWindows: [reset])
+        func titles(cachedAt: Date) -> [String] {
+            let snapshot = cache("/profiles/work", "Work", readAt: cachedAt, fiveHour: nil, weekly: 70)
+            return presenter.limitBars(
+                limits, period: .week, agent: .claudeCode, now: now, account: "Work", snapshot: snapshot
+            ).map(\.title)
+        }
+        // Read after the reset: 70% of the week now running, with no reset time.
+        #expect(titles(cachedAt: now - 3600) == ["Work · Week limit 70%"])
+        // Read before the reset: that 70% belonged to the window that has ended.
+        #expect(titles(cachedAt: now - 3 * 86_400) == ["Work · Week limit reset"])
+    }
+
+    @Test func aLiveReadingOfAWindowWinsOverTheCacheOfIt() {
+        let now = readingNow
+        let live = LimitReport(
+            kind: .weekly, usedPercent: 48, resetsAt: now + 86_400, readAt: now - 60, percentPerHour: nil,
+            runsOutAt: nil, projectedLeftAtReset: nil, calendarDaysLeft: 1
+        )
+        let limits = AgentLimits(fiveHour: nil, weekly: live, monthly: nil)
+        let snapshot = cache("/profiles/work", "Work", readAt: now - 3600, fiveHour: nil, weekly: 95)
+        let bars = presenter.limitBars(
+            limits, period: .week, agent: .claudeCode, now: now, account: "Work", snapshot: snapshot
+        )
+        #expect(bars.map(\.title) == ["Work · Week limit 48%"])
+        let rows = presenter.limitRows(
+            .claudeCode, limits: limits, period: .week, now: now, account: "Work", accountID: "/profiles/work",
+            snapshot: snapshot
+        )
+        #expect(rows.map(\.used) == ["48%"])
+    }
+
+    @Test func theNoteAppearsOnlyForAnAccountWithNoReadingAtAll() throws {
+        let now = readingNow
+        func session(_ id: String, _ name: String) -> SessionEvent {
+            SessionEvent(
+                timestamp: now - 60, agent: .claudeCode, sessionID: "claude-\(name)", kind: .start, state: .working,
+                activeDuration: 0, idleDuration: 0, work: WorkTag(project: "app", concern: "main"),
+                origin: SessionOrigin(
+                    pid: 10, tty: "ttys001", terminal: .warp, folder: "/Users/me/app",
+                    accountName: name, accountID: id
+                )
+            )
+        }
+        let work = cache("/profiles/work", "Work", readAt: now, fiveHour: 20, weekly: 40)
+        let report = accountReport(
+            snapshots: [work], sessions: [session("/profiles/new", "New"), session("/profiles/other", "Other")], now: now
+        )
+        let claude = try agent(report, .claudeCode, .today)
+        #expect(claude.note == NoteModel(
+            title: "Limit reading unavailable", text: "No limit reading saved for New, Other yet."
+        ))
+        // Their rows say so too, and the account with a reading keeps its row.
+        #expect(try all(report).limits.map(\.freesUp) == [
+            "No recent limit reading", "No recent limit reading", "Reset time unknown · read 15:13",
+        ])
+        // Month has no rolling window, so a missing reading is nothing to report there.
+        #expect(try agent(report, .claudeCode, .month).note?.title != "Limit reading unavailable")
+
+        let one = accountReport(snapshots: [work], sessions: [session("/profiles/new", "New")], now: now)
+        #expect(try agent(one, .claudeCode, .today).note?.text == "No limit reading saved for New yet.")
+        let none = accountReport(snapshots: [work], sessions: [session("/profiles/work", "Work")], now: now)
+        #expect(try agent(none, .claudeCode, .today).note?.title != "Limit reading unavailable")
+    }
+
+    @Test func aWindowThatHasResetIsShownAsResetInsteadOfDisappearing() async throws {
+        let report = try await OverlayPresenterTests.fakeReport()
+        // Codex's week reset at 12:32, and its reading at noon is the last it has.
+        let codex = try agent(report, .codex, .week)
+        #expect(codex.limits == [BarRowModel(
+            title: "Week limit reset", detail: "Reset 12:32 · no reading since",
+            fraction: 0, highlightFraction: nil, isNearlyUsed: false, note: nil
+        )])
+        // Codex does share its limits, so the note does not say it doesn't.
+        #expect(codex.note == nil)
+        let row = try #require(try all(report, .week).limits.first { $0.agent == .codex })
+        #expect(row.name == "Codex week limit reset")
+        #expect(row.fraction == 0)
+        #expect(row.freesUp == "Reset 12:32 · no reading since")
+        #expect(!row.isNearlyUsed)
+        // Today has no weekly window to show, and a reset window is not a limit to lead with.
+        #expect(try agent(report, .codex, .today).limits.isEmpty)
+        #expect(try all(report, .week).headline == "Claude runs out first: 52% of its week is left until Thu 09:00.")
+    }
+
+    @Test func aPlanThatHasResetSaysSoOnTheMonthView() {
+        let now = readingNow
+        let reset = ResetWindow(kind: .plan, resetsAt: now - 3600, readAt: now - 7200)
+        let limits = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil, resetWindows: [reset])
+        #expect(presenter.limitBars(limits, period: .month, agent: .kiro, now: now) == [BarRowModel(
+            title: "Plan reset", detail: "Reset 14:13 · no reading since",
+            fraction: 0, highlightFraction: nil, isNearlyUsed: false, note: nil
+        )])
+        #expect(presenter.limitRows(.kiro, limits: limits, period: .month, now: now).map(\.name)
+            == ["Kiro month limit reset"])
+    }
+
+    @Test func theFakeAccountsShowOneKnownResetAndOneUnknown() async throws {
+        let report = try await OverlayPresenterTests.fakeReport()
+        let week = try agent(report, .claudeCode, .week)
+        #expect(week.limits.map(\.title) == ["Default · Week limit 95%", "Second · Week limit 100%"])
+        #expect(week.limits.map(\.detail) == [
+            "Reset time unknown · read 14:29", "Resets Wed 17:00 · in 2d 2h · read 10:32",
+        ])
+        #expect(week.limits.map(\.isNearlyUsed) == [true, true])
+        #expect(week.note == nil)
+        let today = try agent(report, .claudeCode, .today)
+        #expect(today.limits.map(\.title) == ["Default · 5-hour limit 9%", "Second · 5-hour limit 0%"])
+        #expect(try all(report, .week).limits.map(\.name)
+            == ["Claude · Default week", "Claude · Second week", "Codex week limit reset"])
     }
 
     @Test func reportedPercentageWithoutResetSaysResetTimeIsUnavailable() {
@@ -214,7 +406,7 @@ struct UsagePanelPresenterTests {
     // MARK: - Frame 4: every agent, today
 
     @Test func theAllViewMatchesFrame4() async throws {
-        let model = try all(try await OverlayPresenterTests.fakeReport())
+        let model = try all(try await Self.fakeReportWithoutAccounts())
         #expect(model.headline == "Claude runs out first: 38% of its 5-hour window is left until 16:40.")
         #expect(model.limits.map(\.name) == ["Claude 5-hour"])
         #expect(model.limits.map(\.used) == ["62%"])
@@ -343,7 +535,7 @@ struct UsagePanelPresenterTests {
     // MARK: - Frame 5: Claude's week
 
     @Test func claudesWeekMatchesFrame5() async throws {
-        let model = try agent(try await OverlayPresenterTests.fakeReport(), .claudeCode, .week)
+        let model = try agent(try await Self.fakeReportWithoutAccounts(), .claudeCode, .week)
         #expect(model.note == nil)
         // Week shows the weekly limit only, with when it frees up.
         #expect(model.limits.map(\.title) == ["Week limit 48%"])

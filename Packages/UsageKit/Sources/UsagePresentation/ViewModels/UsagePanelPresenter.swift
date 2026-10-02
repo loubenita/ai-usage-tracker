@@ -1,11 +1,32 @@
 import Foundation
 import UsageDomain
 
+/// A window's last known reading when no live reading covers it, as the panel says it: an
+/// account cache's percentage, or a window that has reset with nothing read since.
+struct LastWindow: Equatable {
+    enum State: Equatable {
+        /// A percentage read from an account cache; its reset is ahead, or not known.
+        case reading(percent: Double, resetsAt: Date?)
+        /// The window reset and nothing has been read since.
+        case reset(Date)
+    }
+
+    let kind: LimitStanding.Kind
+    let state: State
+    let readAt: Date
+
+    var isReset: Bool { if case .reset = state { true } else { false } }
+    /// Nil for a window that has reset: its old percentage says nothing about the next one.
+    var percent: Double? { if case .reading(let percent, _) = state { percent } else { nil } }
+    var isNearlyUsed: Bool { (percent ?? 0) >= LimitStanding.warningPercent }
+}
+
 /// Maps a `UsageReport` to the usage button's panel (Paper frames 4 to 6): an agent picker,
 /// Today, Week and Month, and either every agent together or one agent on its own. Pure.
 ///
 /// Nothing an agent does not report is shown as 0. A table cell it cannot fill says "n/a";
-/// absent limits are left out, while stale account readings are identified without a bar.
+/// absent limits are left out, while a limit with no live reading shows what was last read of
+/// it and when, or that it has reset.
 public struct UsagePanelPresenter: Sendable {
     /// Rows of "Where the time went" before the rest are added up in one "N more" row.
     static let allWhereRows = 4
@@ -120,7 +141,7 @@ public struct UsagePanelPresenter: Sendable {
                     : accounts.flatMap {
                         limitRows(
                             agent, limits: $0.limits, period: period, now: report.now,
-                            account: $0.name, accountID: $0.id, snapshot: currentSnapshot($0.snapshot, now: report.now)
+                            account: $0.name, accountID: $0.id, snapshot: $0.snapshot
                         )
                     }
             },
@@ -184,41 +205,18 @@ public struct UsagePanelPresenter: Sendable {
         }
     }
 
-    /// Each limit the agent shares, or one "no data" row.
+    /// Each limit the agent shares, then each window with no live reading as it was last read or
+    /// as reset; or one "no data" row for an account with no reading at all.
     func limitRows(
         _ agent: Agent, limits: AgentLimits, period: UsagePeriod, now: Date,
         account: String? = nil, accountID: String? = nil,
         snapshot: AccountUsageSnapshot? = nil
     ) -> [LimitListRowModel] {
-        let allStandings = limits.standings
-        let standings = visibleStandings(allStandings, period: period)
         let label = [agent.displayName, account].compactMap { $0 }.joined(separator: " · ")
-        if standings.isEmpty, let snapshot {
-            return snapshotValues(snapshot, period: period).compactMap { window, percent in
-                guard let percent else { return nil }
-                return LimitListRowModel(
-                    id: "\(agent.rawValue)-\(accountID ?? "default")-\(window)",
-                    agent: agent, name: "\(label) \(window)", fraction: percent / 100,
-                    used: format.percentPoints(percent),
-                    freesUp: "Reset time unavailable · read \(format.moment(snapshot.readAt, now: now))",
-                    isNearlyUsed: percent >= LimitStanding.warningPercent
-                )
-            }
-        }
-        // This agent only shares a window outside the selected period. Do not turn that into a
-        // misleading empty row on Today.
-        guard allStandings.isEmpty || !standings.isEmpty else { return [] }
-        guard !standings.isEmpty else {
-            // Month shows no rolling window, so a missing reading is nothing to report there.
-            guard account != nil, period != .month else { return [] }
-            return [LimitListRowModel(
-                id: "\(agent.rawValue)-\(accountID ?? "none")-none", agent: agent, name: label, fraction: nil, used: "",
-                freesUp: "No recent limit reading", isNearlyUsed: false
-            )]
-        }
-        return standings.map { standing in
+        func id(_ kind: LimitStanding.Kind) -> String { "\(agent.rawValue)-\(accountID ?? "default")-\(kind)" }
+        let live = visibleStandings(limits.standings, period: period).map { standing in
             LimitListRowModel(
-                id: "\(agent.rawValue)-\(accountID ?? "default")-\(standing.kind)",
+                id: id(standing.kind),
                 agent: agent,
                 name: "\(label) \(Self.shortWindow(standing.kind))",
                 fraction: standing.usedPercent / 100,
@@ -227,6 +225,27 @@ public struct UsagePanelPresenter: Sendable {
                 isNearlyUsed: standing.isNearlyUsed
             )
         }
+        let last = lastWindows(limits, snapshot: snapshot, period: period, now: now).map { window in
+            LimitListRowModel(
+                id: id(window.kind),
+                agent: agent,
+                name: "\(label) \(Self.shortWindow(window.kind))" + (window.isReset ? " limit reset" : ""),
+                fraction: window.percent.map { $0 / 100 } ?? 0,
+                used: window.percent.map { format.percentPoints($0) } ?? "",
+                freesUp: detail(window, now: now),
+                isNearlyUsed: window.isNearlyUsed
+            )
+        }
+        if !live.isEmpty || !last.isEmpty { return live + last }
+        // An agent that only shares a window outside the selected period, or an account whose
+        // reading is of another period, is not an empty row on this one. Month shows no rolling
+        // window, so a missing reading is nothing to report there.
+        guard limits.standings.isEmpty, limits.resetWindows.isEmpty, snapshot == nil,
+              account != nil, period != .month else { return [] }
+        return [LimitListRowModel(
+            id: "\(agent.rawValue)-\(accountID ?? "none")-none", agent: agent, name: label, fraction: nil, used: "",
+            freesUp: "No recent limit reading", isNearlyUsed: false
+        )]
     }
 
     static func shortWindow(_ kind: LimitStanding.Kind) -> String {
@@ -253,8 +272,9 @@ public struct UsagePanelPresenter: Sendable {
         let open = report.sessions.map(\.summary).filter { $0.agent == agent }
         let limits = report.limits(for: agent)
         let accounts = report.accounts.filter { $0.agent == agent }
-        let accountsWithoutCurrentLimits = period == .month ? [] : accounts.filter {
-            $0.limits.standings.isEmpty && currentSnapshot($0.snapshot, now: report.now) == nil
+        // Only an account with no reading at all: no live limit, no cache and no window that reset.
+        let accountsWithoutReadings = period == .month ? [] : accounts.filter {
+            $0.limits.standings.isEmpty && $0.limits.resetWindows.isEmpty && $0.snapshot == nil
         }.map(\.name)
         let hasTokens = fullUsed?.tokens != nil
         let models = (usage?.byModel ?? []).prefix(Self.modelRows).map { share in
@@ -265,18 +285,21 @@ public struct UsagePanelPresenter: Sendable {
         }
         return AgentUsageModel(
             agent: agent,
-            note: accountsWithoutCurrentLimits.isEmpty
-                ? note(agent, used: fullUsed, limits: limits, hasAccountUsage: accounts.contains { $0.snapshot != nil })
+            note: accountsWithoutReadings.isEmpty
+                ? note(
+                    agent, used: fullUsed, limits: limits,
+                    hasAccountUsage: accounts.contains { $0.snapshot != nil || !$0.limits.resetWindows.isEmpty }
+                )
                 : NoteModel(
                     title: "Limit reading unavailable",
-                    text: "No recent limit reading for \(accountsWithoutCurrentLimits.joined(separator: ", ")). Cached percentages older than 15 minutes are hidden."
+                    text: "No limit reading saved for \(accountsWithoutReadings.joined(separator: ", ")) yet."
                 ),
             limits: accounts.isEmpty
                 ? limitBars(limits, period: period, agent: agent, now: report.now)
                 : accounts.flatMap {
                     limitBars(
                         $0.limits, period: period, agent: agent, now: report.now,
-                        account: $0.name, snapshot: currentSnapshot($0.snapshot, now: report.now)
+                        account: $0.name, snapshot: $0.snapshot
                     )
                 },
             stats: hasTokens
@@ -296,7 +319,7 @@ public struct UsagePanelPresenter: Sendable {
         _ agent: Agent, used: AgentPeriodUsage?, limits: AgentLimits,
         hasAccountUsage: Bool = false
     ) -> NoteModel? {
-        let hasLimits = !limits.standings.isEmpty || hasAccountUsage
+        let hasLimits = !limits.standings.isEmpty || !limits.resetWindows.isEmpty || hasAccountUsage
         let hasTokens = used?.tokens != nil
         let hasCost = used?.costUSD != nil || used?.credits != nil
         if agent == .claudeCode && !hasLimits && hasTokens {
@@ -317,62 +340,95 @@ public struct UsagePanelPresenter: Sendable {
         )
     }
 
-    /// Each limit as a bar: the shortest window first on Today, the week first otherwise.
+    /// Each limit as a bar: the shortest window first on Today, the week first otherwise. A window
+    /// with no live reading follows the same order, as it was last read or as reset.
     func limitBars(
         _ limits: AgentLimits, period: UsagePeriod, agent: Agent, now: Date,
         account: String? = nil, snapshot: AccountUsageSnapshot? = nil
     ) -> [BarRowModel] {
-        if limits.standings.isEmpty, let snapshot {
-            let values = snapshotValues(snapshot, period: period).map { window, percent in
-                (window == "5-hour" ? "5-hour limit" : "Week limit", percent)
-            }
-            return values.compactMap { title, percent in
-                guard let percent else { return nil }
-                return BarRowModel(
-                    title: "\(account ?? agent.displayName) · \(title) \(format.percentPoints(percent))",
-                    detail: "Reset time unavailable · read \(format.moment(snapshot.readAt, now: now))",
-                    fraction: percent / 100,
-                    highlightFraction: nil, isNearlyUsed: percent >= LimitStanding.warningPercent,
-                    note: nil
-                )
-            }
-        }
         let order: [LimitStanding.Kind] = period == .today
             ? [.fiveHour, .weekly, .monthly, .plan] : [.weekly, .monthly, .plan, .fiveHour]
-        let standings = visibleStandings(limits.standings, period: period).sorted {
-            (order.firstIndex(of: $0.kind) ?? 0) < (order.firstIndex(of: $1.kind) ?? 0)
-        }
-        return standings.enumerated().map { index, standing in
+        func rank(_ kind: LimitStanding.Kind) -> Int { order.firstIndex(of: kind) ?? 0 }
+        let who = account.map { "\($0) · " } ?? ""
+        let standings = visibleStandings(limits.standings, period: period).sorted { rank($0.kind) < rank($1.kind) }
+        var bars: [(kind: LimitStanding.Kind, bar: BarRowModel)] = []
+        for (index, standing) in standings.enumerated() {
             let detail = standing.resetsAt.map { reset in
                 "Resets \(format.moment(reset, now: now)) · in \(format.duration(reset.timeIntervalSince(now)))"
             } ?? "Reset time unavailable"
-            return BarRowModel(
-                title: account.map {
-                    "\($0) · \(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))"
-                } ?? "\(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))",
+            bars.append((standing.kind, BarRowModel(
+                title: "\(who)\(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))",
                 detail: detail,
                 fraction: standing.usedPercent / 100,
                 highlightFraction: nil,
                 isNearlyUsed: standing.isNearlyUsed,
                 note: index == 0 ? pace(standing, now: now) : nil
+            )))
+        }
+        for window in lastWindows(limits, snapshot: snapshot, period: period, now: now) {
+            let name = OverlayPresenter.limitName(window.kind)
+            bars.append((window.kind, BarRowModel(
+                title: window.percent.map { "\(who)\(name) \(format.percentPoints($0))" } ?? "\(who)\(name) reset",
+                detail: detail(window, now: now),
+                fraction: window.percent.map { $0 / 100 } ?? 0,
+                highlightFraction: nil,
+                isNearlyUsed: window.isNearlyUsed,
+                note: nil
+            )))
+        }
+        return bars.sorted { rank($0.kind) < rank($1.kind) }.map(\.bar)
+    }
+
+    /// The windows of this period that no live reading covers, as last known: an account cache's
+    /// percentages and the windows seen resetting, the later reading of each kind winning. Nothing
+    /// hides one for being old; a reset that has passed says so instead of showing its percentage.
+    func lastWindows(
+        _ limits: AgentLimits, snapshot: AccountUsageSnapshot?, period: UsagePeriod, now: Date
+    ) -> [LastWindow] {
+        let resets = limits.resetWindows.map {
+            LastWindow(kind: $0.kind, state: .reset($0.resetsAt), readAt: $0.readAt)
+        }
+        var latest: [LimitStanding.Kind: LastWindow] = [:]
+        for window in resets + (snapshot.map { snapshotWindows($0, now: now) } ?? []) {
+            if let known = latest[window.kind], known.readAt > window.readAt { continue }
+            latest[window.kind] = window
+        }
+        let live = Set(limits.standings.map(\.kind))
+        let order: [LimitStanding.Kind] = [.fiveHour, .weekly, .monthly, .plan]
+        return latest.values
+            .filter { Self.isVisible($0.kind, in: period) && !live.contains($0.kind) }
+            .sorted { (order.firstIndex(of: $0.kind) ?? 0) < (order.firstIndex(of: $1.kind) ?? 0) }
+    }
+
+    /// What an account cache last read of each window it has a percentage for. A reset time that
+    /// has passed ends the reading: its percentage was of a window that is over.
+    func snapshotWindows(_ snapshot: AccountUsageSnapshot, now: Date) -> [LastWindow] {
+        let windows: [(LimitStanding.Kind, Double?, Date?)] = [
+            (.fiveHour, snapshot.fiveHourPercent, snapshot.fiveHourResetsAt),
+            (.weekly, snapshot.weeklyPercent, snapshot.weeklyResetsAt),
+        ]
+        return windows.compactMap { kind, percent, resetsAt -> LastWindow? in
+            guard let percent else { return nil }
+            if let resetsAt, resetsAt <= now {
+                return LastWindow(kind: kind, state: .reset(resetsAt), readAt: snapshot.readAt)
+            }
+            return LastWindow(
+                kind: kind, state: .reading(percent: percent, resetsAt: resetsAt), readAt: snapshot.readAt
             )
         }
     }
 
-    /// The account-usage cache only contains percentages. It has neither a reset timestamp nor
-    /// a way to say which window those percentages still belong to, so after fifteen minutes it
-    /// cannot safely describe a live limit. A status-line reading with a future `resetsAt` wins
-    /// over this cache through `limits` above and remains visible for its own account.
-    func currentSnapshot(_ snapshot: AccountUsageSnapshot?, now: Date) -> AccountUsageSnapshot? {
-        guard let snapshot, now.timeIntervalSince(snapshot.readAt) <= 15 * 60 else { return nil }
-        return snapshot
-    }
-
-    func snapshotValues(_ snapshot: AccountUsageSnapshot, period: UsagePeriod) -> [(String, Double?)] {
-        switch period {
-        case .today: [("5-hour", snapshot.fiveHourPercent)]
-        case .week: [("week", snapshot.weeklyPercent)]
-        case .month: []
+    /// "Resets Thu 09:00 · in 2d 18h · read 15:13", "Reset time unknown · read 15:13", or
+    /// "Reset Thu 09:00 · no reading since".
+    func detail(_ window: LastWindow, now: Date) -> String {
+        switch window.state {
+        case .reset(let date):
+            return "Reset \(format.moment(date, now: now)) · no reading since"
+        case .reading(_, let resetsAt):
+            let read = "read \(format.moment(window.readAt, now: now))"
+            guard let resetsAt else { return "Reset time unknown · \(read)" }
+            let left = format.duration(resetsAt.timeIntervalSince(now))
+            return "Resets \(format.moment(resetsAt, now: now)) · in \(left) · \(read)"
         }
     }
 

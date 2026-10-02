@@ -106,17 +106,47 @@ struct FakeUsageRepositoryTests {
         #expect(report.fiveHour?.percentPerHour == 23)
         #expect(report.weekly?.usedPercent == 48)
         #expect(report.weekly?.calendarDaysLeft == 3)
-        // Claude has no monthly window; Codex's week is at 95%.
+        // Claude has no monthly window.
         #expect(report.monthly == nil)
-        #expect(report.limits(for: .codex).weekly?.usedPercent == 95)
+    }
+
+    @Test func codexsLastWeeklyReadingIsFromBeforeItsWindowReset() async throws {
+        let repository = FakeUsageRepository(calendar: calendar)
+        let records = try await repository.records(
+            from: repository.anchor.addingTimeInterval(-86_400), to: repository.anchor
+        )
+        let weekly = records.limits.filter { $0.agent == .codex }.flatMap { reading in
+            reading.windows.filter { $0.kind == .weekly }.map { (reading.timestamp, $0) }
+        }
+        // One reading, 95% at noon, and its window reset two hours before now.
+        #expect(weekly.count == 1)
+        let (readAt, window) = try #require(weekly.first)
+        #expect(window.usedPercent == 95)
+        #expect(readAt < window.resetsAt)
+        #expect(repository.anchor.timeIntervalSince(window.resetsAt) == 2 * 3600)
+    }
+
+    @Test func twoClaudeAccountsOneReadMinutesAgoAndOneAtItsLimitHoursAgo() async throws {
+        let repository = FakeUsageRepository(calendar: calendar)
+        let records = try await repository.records(from: repository.anchor.addingTimeInterval(-3600), to: repository.anchor)
+        let snapshots = records.accountSnapshots.sorted { $0.id < $1.id }
+        #expect(snapshots.map(\.id) == ["/Users/me/.claude", "/Users/me/.claude-second"])
+        #expect(snapshots.map(\.name) == ["Default", "Second"])
+        #expect(snapshots.map { $0.fiveHourPercent } == [9, 0])
+        #expect(snapshots.map { $0.weeklyPercent } == [95, 100])
+        #expect(snapshots.map { repository.anchor.timeIntervalSince($0.readAt) } == [3 * 60, 4 * 3600])
+        // Both accounts reach the report, whatever their age.
+        let report = try await report()
+        #expect(report.accounts.map(\.name).sorted() == ["Default", "Second"])
+        #expect(report.accounts.allSatisfy { $0.agent == .claudeCode && $0.snapshot != nil })
     }
 
     @Test func recordsOutsideTheRangeAreLeftOut() async throws {
         let repository = FakeUsageRepository(calendar: calendar)
         let records = try await repository.records(from: repository.anchor.addingTimeInterval(-3600), to: repository.anchor)
         #expect(records.turns.allSatisfy { $0.timestamp >= repository.anchor.addingTimeInterval(-3600) })
-        // Claude's 5-hour reading an hour ago, and Claude's and Codex's now.
-        #expect(records.limits.count == 3)
+        // Claude's 5-hour reading an hour ago and Claude's now; Codex's was taken at noon.
+        #expect(records.limits.count == 2)
     }
 
     @Test func fakeClockStartsAtTheAnchorAndRuns() {

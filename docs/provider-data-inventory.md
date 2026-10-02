@@ -60,7 +60,7 @@ Sources: `UsageData/Claude/ClaudeTranscript.swift`, `ClaudeAccounts.swift`, `Cla
 
 `ClaudeAccounts.swift` finds `.claude` and `.claude-*` profiles. Sessions carry a friendly profile name plus local directory ID. `ClaudeLimitsLog.swift` attaches limits to that profile. `GenerateUsageReport.swift` keeps each account separate in Usage and uses the matching account's five-hour reading for a live session.
 
-`ClaudeAccountCache.swift` accepts `account-*.json` snapshots for up to seven days. It supplies only 5-hour/week percentages, profile ID and read time. `UsagePanelPresenter` suppresses a snapshot once it is older than 15 minutes, so the seven-day rule is source acceptance rather than UI freshness. It has **no reset time**: never make one up.
+`ClaudeAccountCache.swift` accepts `account-*.json` snapshots for up to seven days. It supplies 5-hour/week percentages, profile ID and read time, plus `five_hour_resets_at` and `weekly_resets_at` (epoch seconds) when the status line that wrote it saved them. `UsagePanelPresenter` shows a snapshot at any age, with its read time. A snapshot without a reset time shows "Reset time unknown": never make one up. When a reset time has passed, the window shows as reset instead of its old percentage.
 
 ## Codex
 

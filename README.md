@@ -76,7 +76,7 @@ It shows only the selected session, including a named Claude account when one is
 
 The button under the strip opens the usage panel: every agent, or one, across Today, Week and Month.
 
-It opens by naming what runs out first — "Codex runs out first: 5% of its week is left until Thu 06:57" — then lists available limits by provider and Claude account. Each reading has its window, used share, progress bar, and a reset time when the source supplies one. Old account readings are labelled instead of shown as current. Bars turn amber at 85%. Under that: time, tokens and spend for each agent, and where the time went. Picking one agent shows its limits and pace, its numbers, a chart of the period, its models and its work. Today omits weekly limits.
+It opens by naming what runs out first — "Codex runs out first: 5% of its week is left until Thu 06:57" — then lists available limits by provider and Claude account. Each reading has its window, used share, progress bar, and a reset time when the source supplies one. A limit nobody has read lately still shows its last reading and when it was taken, so an account at 100% stays visible. A limit that has reset since its last reading says so: "Week limit reset · Reset 12:32 · no reading since". Bars turn amber at 85%. Under that: time, tokens and spend for each agent, and where the time went. Picking one agent shows its limits and pace, its numbers, a chart of the period, its models and its work. Today omits weekly limits.
 
 <p>
   <img src="docs/images/usage-week.png" alt="The usage panel for every agent this week: it opens with &quot;Codex has run out of its week until Sat 21:23&quot;, then Claude and Codex limit bars, time, tokens and spend for each agent, and where the time went" width="380" align="top">

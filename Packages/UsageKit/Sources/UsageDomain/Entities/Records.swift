@@ -198,7 +198,8 @@ public struct SessionSnapshot: Sendable, Hashable {
     }
 }
 
-/// Percentages a local account cache knows without a reset time.
+/// The percentages a local account cache last read, and when each window resets if the cache
+/// knows. A cache saved before it learned reset times has none, and the panel says so.
 public struct AccountUsageSnapshot: Sendable, Hashable {
     public let id: String
     public let name: String
@@ -206,10 +207,13 @@ public struct AccountUsageSnapshot: Sendable, Hashable {
     public let readAt: Date
     public let fiveHourPercent: Double?
     public let weeklyPercent: Double?
+    public let fiveHourResetsAt: Date?
+    public let weeklyResetsAt: Date?
 
     public init(
         id: String, name: String, agent: Agent, readAt: Date,
-        fiveHourPercent: Double?, weeklyPercent: Double?
+        fiveHourPercent: Double?, weeklyPercent: Double?,
+        fiveHourResetsAt: Date? = nil, weeklyResetsAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -217,6 +221,8 @@ public struct AccountUsageSnapshot: Sendable, Hashable {
         self.readAt = readAt
         self.fiveHourPercent = fiveHourPercent
         self.weeklyPercent = weeklyPercent
+        self.fiveHourResetsAt = fiveHourResetsAt
+        self.weeklyResetsAt = weeklyResetsAt
     }
 }
 
