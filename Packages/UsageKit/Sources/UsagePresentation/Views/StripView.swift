@@ -281,11 +281,13 @@ private struct StripItemView: View {
         HStack(alignment: .center, spacing: 8) {
             AgentMark(agent: item.ring.agent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .font(TypeScale.font(TypeScale.body, .semibold))
-                    .foregroundStyle(Theme.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                HStack(spacing: 5) {
+                    Text(item.title)
+                        .font(TypeScale.font(TypeScale.body, .semibold))
+                        .foregroundStyle(Theme.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
                 Text(context)
                     .font(TypeScale.font(TypeScale.caption, .medium))
                     .foregroundStyle(Theme.timer)

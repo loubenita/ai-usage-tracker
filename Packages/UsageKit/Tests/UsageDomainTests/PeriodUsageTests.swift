@@ -104,6 +104,27 @@ struct PeriodUsageTests {
         #expect(fromToday.buckets.map(\.tokens) == [14_500])
     }
 
+    @Test func eachBucketSumsItsCreditsForTheCreditsChart() {
+        let yesterday = today.addingTimeInterval(-86_400)
+        var creditTurns: [Turn] = []
+        // Kiro bills credits yesterday and today, in two different buckets.
+        creditTurns.append(turn(.kiro, "k", minutesAgo: 24 * 60 + 30, credits: 4))
+        creditTurns.append(turn(.kiro, "k", minutesAgo: 24 * 60 + 20, credits: 2))
+        creditTurns.append(turn(.kiro, "k", minutesAgo: 30, credits: 3))
+        let week = PeriodUsageBuilder.make(
+            .week, turns: creditTurns, start: yesterday, bucketStarts: [yesterday, today], openAgents: []
+        )
+        // Yesterday's bucket sums 4 + 2 credits, today's 3; neither has tokens.
+        #expect(week.buckets.map(\.credits) == [6, 3])
+        #expect(week.buckets.map(\.tokens) == [0, 0])
+        // A bucket with no credits reports 0, the default.
+        let noCredits = PeriodUsageBuilder.make(
+            .week, turns: [turn(.codex, "x", minutesAgo: 30, tokens: 500)], start: yesterday,
+            bucketStarts: [yesterday, today], openAgents: []
+        )
+        #expect(noCredits.buckets.map(\.credits) == [0, 0])
+    }
+
     // MARK: - Limits
 
     func report(_ kind: LimitWindowKind, used: Double, resets: Date, runsOut: Date? = nil, left: Double? = nil) -> LimitReport {

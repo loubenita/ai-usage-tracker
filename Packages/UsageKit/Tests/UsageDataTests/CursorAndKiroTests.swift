@@ -257,6 +257,262 @@ struct KiroSessionTests {
         // The session's own reading is the latest request's: 20%.
         #expect(session.context == ContextUsage(used: 200_000, window: 1_000_000))
     }
+
+    // MARK: - The transcript estimate and the sub-agent flag
+
+    /// A hand-written transcript in the shape of a real `<id>.jsonl`. It carries every kind the
+    /// estimate reads: a Prompt line and a ToolResults line (both counted as input by their
+    /// whole-line length), and an AssistantMessage line (counted as output by its whole-line
+    /// length). The nested shapes are realistic, but the estimate measures each line's raw
+    /// length, not its inner text.
+    static let transcript = #"""
+    {"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"abcdefgh"}]}}
+    {"version":1,"kind":"ToolResults","data":{"content":[{"data":{"content":[{"kind":"text","data":"0123456789"}]}}]}}
+    {"version":1,"kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"wxyz"},{"kind":"toolUse","data":{"name":"read","path":"a.txt"}},{"kind":"thinking","data":{"text":"hmm"}}]}}
+
+    """#
+
+    @Test func theTranscriptEstimateCountsPromptAndToolResultsAsInput() throws {
+        let estimate = try #require(KiroSession.estimatedTokens(fromTranscript: Self.transcript))
+        // 2.5 characters a token, rounded, over each matched line's full length. Input is the
+        // 84-character Prompt line plus the 114-character ToolResults line: 198/2.5 = 79.2, so
+        // 79 input tokens.
+        #expect(estimate.input == 79)
+        // Output is the 189-character AssistantMessage line: 189/2.5 = 75.6, so 76 output tokens.
+        #expect(estimate.output == 76)
+        #expect(estimate == TokenUsage(input: 79, output: 76, cacheRead: nil, cacheWrite: nil))
+        // No cache tokens are ever fabricated.
+        #expect(estimate.cacheRead == nil && estimate.cacheWrite == nil)
+    }
+
+    @Test func anEmptyOrUnparsableTranscriptEstimatesNothing() {
+        #expect(KiroSession.estimatedTokens(fromTranscript: "") == nil)
+        // Neither line parses as JSON with a top-level kind, so nothing is counted.
+        #expect(KiroSession.estimatedTokens(fromTranscript: "not json\n{") == nil)
+        // A line whose kind is not Prompt, ToolResults or AssistantMessage is ignored.
+        let other = #"{"version":1,"kind":"ToolUseSummary","data":{"content":[]}}"#
+        #expect(KiroSession.estimatedTokens(fromTranscript: other) == nil)
+    }
+
+    @Test func aToolResultsLineIsCountedAsInputNotOutput() throws {
+        // A single ToolResults line is input, and there is no output. Its whole 118-character
+        // line is measured, not just the inner text.
+        let toolOnly = #"""
+        {"version":1,"kind":"ToolResults","data":{"content":[{"data":{"content":[{"kind":"text","data":"abcdefghijklmn"}]}}]}}
+        """#
+        let estimate = try #require(KiroSession.estimatedTokens(fromTranscript: toolOnly))
+        // 118 characters at 2.5 a token (118/2.5 = 47.2) give 47 input tokens, no output.
+        #expect(estimate == TokenUsage(input: 47, output: nil, cacheRead: nil, cacheWrite: nil))
+    }
+
+    @Test func anAssistantMessageLineContributesToOutput() throws {
+        // An AssistantMessage line of 117 characters: its whole length is output.
+        let assistant = #"""
+        {"version":1,"kind":"AssistantMessage","data":{"content":[{"kind":"toolUse","data":{"name":"read","path":"a.txt"}}]}}
+        """#
+        let estimate = try #require(KiroSession.estimatedTokens(fromTranscript: assistant))
+        // 117 characters at 2.5 a token (117/2.5 = 46.8) give 47 output tokens, no input.
+        #expect(estimate == TokenUsage(input: nil, output: 47, cacheRead: nil, cacheWrite: nil))
+    }
+
+    @Test func malformedLinesAreSkippedNotCrashed() {
+        // Lines that do not parse as JSON, or that carry no top-level kind, are skipped. The
+        // kind is read defensively, but the measure is each matched line's raw length regardless
+        // of its inner shape. Here the Prompt line (63 chars) and the two ToolResults lines (95
+        // and 67 chars) count as input, and the AssistantMessage line (49 chars) as output.
+        let broken = #"""
+        not json at all
+        {"version":1,"kind":"Prompt","data":{"content":"not an array"}}
+        {"version":1,"kind":"ToolResults","data":{"content":[{"data":"a plain string of tool text."}]}}
+        {"version":1,"kind":"AssistantMessage","data":{}}
+        {"version":1,"kind":"ToolResults","data":{"content":[{"data":{}}]}}
+        """#
+        // Input: (63 + 95 + 67)/2.5 = 225/2.5 = 90. Output: 49/2.5 = 19.6, so 20.
+        #expect(KiroSession.estimatedTokens(fromTranscript: broken)
+            == TokenUsage(input: 90, output: 20, cacheRead: nil, cacheWrite: nil))
+    }
+
+    @Test func onlyOneSideOfTheConversationStillEstimates() throws {
+        let promptOnly = #"{"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"abcdefghijkl"}]}}"#
+        let estimate = try #require(KiroSession.estimatedTokens(fromTranscript: promptOnly))
+        // The 88-character line at 2.5 a token (88/2.5 = 35.2) gives 35 input tokens, no output.
+        #expect(estimate == TokenUsage(input: 35, output: nil, cacheRead: nil, cacheWrite: nil))
+    }
+
+    @Test func theFactoryPopulatesTheEstimateFromTheTranscript() throws {
+        let withText = try #require(
+            KiroSession(json: Data(Self.currentJSON.utf8), transcript: Self.transcript, fallbackID: "file")
+        )
+        #expect(withText.estimatedTokens == TokenUsage(input: 79, output: 76))
+        // Without a transcript the estimate is nil, and the old initializer keeps it nil.
+        let withoutText = try #require(KiroSession(json: Data(Self.currentJSON.utf8), transcript: nil, fallbackID: "file"))
+        #expect(withoutText.estimatedTokens == nil)
+        #expect(KiroSession(json: Data(Self.currentJSON.utf8), fallbackID: "file")?.estimatedTokens == nil)
+    }
+
+    @Test func theEstimateNeverEntersThePreciseTokenPath() throws {
+        // Current builds report every precise count as 0, so the session's precise tokens stay
+        // unknown even though an estimate is available.
+        let session = try #require(
+            KiroSession(json: Data(Self.currentJSON.utf8), transcript: Self.transcript, fallbackID: "file")
+        )
+        #expect(session.turns(sessionID: "k", work: CodexRolloutTests.work).allSatisfy { $0.tokens == nil })
+        #expect(session.estimatedTokens != nil)
+    }
+
+    @Test func kiroNeverMarksASessionAsASubagent() throws {
+        // Kiro writes session_created_reason "subagent" on every CLI session, including the
+        // app's own /usage probe, so the field cannot identify a real sub-agent. No session is
+        // treated as one, whatever the field says.
+        let user = try #require(KiroSession(json: Data(Self.currentJSON.utf8), fallbackID: "file"))
+        #expect(user.isSubagent == false)
+        let labelledSubagentJSON = #"""
+        { "session_id": "kiro-sub", "session_created_reason": "subagent",
+          "session_state": { "conversation_metadata": { "user_turn_metadatas": [
+            { "end_timestamp": 1790071200 } ] } } }
+        """#
+        let labelled = try #require(KiroSession(json: Data(labelledSubagentJSON.utf8), fallbackID: "file"))
+        #expect(labelled.isSubagent == false)
+        let bare = try #require(KiroSession(json: Data(Self.json.utf8), fallbackID: "file"))
+        #expect(bare.isSubagent == false)
+    }
+}
+
+/// A Kiro V3 (ACP) session transcript, read line by line. `Fixtures/kiro-v3-messages.jsonl` is
+/// written by hand in the shape of a real `messages.jsonl`: an `assistant` line carrying a
+/// namespaced `reasoningModelId` and its `executionId`, a successful `usage_summary` with the
+/// credits, tools and elapsed time, a second successful turn billed in two parts, an aborted
+/// (`status` "error") `usage_summary` whose credits must still be counted, and malformed lines
+/// that must never crash.
+@Suite("Reading a Kiro V3 session")
+struct KiroV3TranscriptTests {
+    static let work = Work(tag: WorkTag(project: "app", concern: "main"))
+
+    static func transcript() throws -> KiroV3Transcript {
+        var transcript = KiroV3Transcript()
+        for line in try Fixture.text("kiro-v3-messages.jsonl").split(whereSeparator: \.isNewline) {
+            transcript.consume(Data(line.utf8))
+        }
+        return transcript
+    }
+
+    @Test func eachUsageSummaryBecomesATurnWhateverItsStatus() throws {
+        let turns = try Self.transcript().turns(
+            sessUUID: "sess_abc", sessionID: "kiro-sess_abc", work: Self.work, sessionModel: "auto"
+        )
+        // Three turns: two successful and one aborted; only the malformed lines add nothing.
+        #expect(turns.count == 3)
+        let first = try #require(turns.first)
+        #expect(first.id == "kiroV3-sess_abc-exec-1")
+        #expect(first.agent == .kiro)
+        #expect(first.sessionID == "kiro-sess_abc")
+        #expect(first.timestamp == KiroSession.date("2026-10-01T10:24:11.946Z"))
+        // One credit entry of 1.06.
+        #expect(first.credits == 1.06)
+        // Two tools used.
+        #expect(first.toolCalls == 2)
+        // 38911 ms is 38.911 seconds.
+        #expect(first.duration == 38.911)
+        // Kiro bills in credits, so no dollar cost and no token counts.
+        #expect(first.cost.usd == nil)
+        #expect(first.tokens == nil)
+    }
+
+    @Test func modelComesFromTheMatchingAssistantLineNormalised() throws {
+        let turns = try Self.transcript().turns(
+            sessUUID: "sess_abc", sessionID: "kiro-sess_abc", work: Self.work, sessionModel: "auto"
+        )
+        // "qdev::auto" and "qdev::claude-opus-4.8" lose their namespace to match the V2 ids. The
+        // aborted exec-3 has no assistant line, so it takes the session's model.
+        #expect(turns.map(\.model) == [ModelName("auto"), ModelName("claude-opus-4.8"), ModelName("auto")])
+    }
+
+    @Test func creditsOfATurnAreSummedOverItsCreditEntries() throws {
+        let turns = try Self.transcript().turns(
+            sessUUID: "sess_abc", sessionID: "kiro-sess_abc", work: Self.work, sessionModel: "auto"
+        )
+        // The second turn is billed in two parts: 0.25 + 0.5.
+        #expect(turns[1].credits == 0.75)
+        #expect(turns[1].toolCalls == 3)
+    }
+
+    @Test func anAbortedUsageSummaryStillCountsItsCredits() throws {
+        let turns = try Self.transcript().turns(
+            sessUUID: "sess_abc", sessionID: "kiro-sess_abc", work: Self.work, sessionModel: "auto"
+        )
+        // exec-3 had status "error" and a credit of 9.99; an aborted or failed turn is still
+        // billed, so it becomes a turn and its credits are counted.
+        let aborted = try #require(turns.first { $0.id.hasSuffix("exec-3") })
+        #expect(aborted.credits == 9.99)
+    }
+
+    @Test func anAbortedTurnContributesItsCreditsToTheTotal() throws {
+        let transcript = try Self.transcript()
+        // 1.06 + 0.75 + the aborted 9.99 = 11.80.
+        #expect(transcript.credits(since: .distantPast) == 11.80)
+    }
+
+    @Test func statusIsKeptButDoesNotGateCredits() throws {
+        let transcript = try Self.transcript()
+        // The two successful turns and the one aborted turn are all read; status is kept for
+        // display only, so the aborted turn is present with isSuccess false and its credits.
+        let aborted = try #require(transcript.usages.first { $0.executionId == "exec-3" })
+        #expect(aborted.isSuccess == false)
+        #expect(aborted.credits == 9.99)
+        #expect(transcript.usages.filter(\.isSuccess).count == 2)
+    }
+
+    @Test func creditsSinceADateCountOnlyLaterTurns() throws {
+        let transcript = try Self.transcript()
+        // All three turns: 1.06 + 0.75 + the aborted 9.99 = 11.80.
+        #expect(transcript.credits(since: .distantPast) == 11.80)
+        // After the first turn, the second's 0.75 and the aborted 9.99 at 10:40 count.
+        #expect(transcript.credits(since: Fixture.date("2026-10-01T10:25:00Z")) == 10.74)
+        #expect(transcript.credits(since: Fixture.date("2026-10-01T11:00:00Z")) == nil)
+    }
+
+    @Test func aTurnWithNoAssistantLineFallsBackToTheSessionModelThenAuto() {
+        var transcript = KiroV3Transcript()
+        let line = #"{"timestamp":"2026-10-01T10:00:00.000Z","payload":{"type":"usage_summary","status":"success","executionId":"x","promptTurnSummaries":[{"unit":"credit","usage":1.0,"usedTools":[]}],"elapsedTime":1000}}"#
+        transcript.consume(Data(line.utf8))
+        let withSession = transcript.turns(sessUUID: "s", sessionID: "kiro-s", work: Self.work, sessionModel: "auto")
+        #expect(withSession.first?.model == ModelName("auto"))
+        let withoutSession = transcript.turns(sessUUID: "s", sessionID: "kiro-s", work: Self.work, sessionModel: nil)
+        #expect(withoutSession.first?.model == ModelName("auto"))
+    }
+
+    @Test func modelNormalisationMatchesTheV2AutoName() {
+        // The core requirement: "qdev::auto" and "auto" must yield the same ModelName (and so
+        // the same display name), so V3 turns group with V2 turns in the by-model views.
+        #expect(ModelName(KiroV3Transcript.normalisedModel("qdev::auto")) == ModelName("auto"))
+        #expect(KiroV3Transcript.normalisedModel("qdev::auto") == "auto")
+        #expect(KiroV3Transcript.normalisedModel("qdev::claude-opus-4.8") == "claude-opus-4.8")
+        // An id with no namespace is unchanged, and only the last "::" is the boundary.
+        #expect(KiroV3Transcript.normalisedModel("auto") == "auto")
+        #expect(KiroV3Transcript.normalisedModel("a::b::c") == "c")
+    }
+
+    @Test func partialOrNonJsonLinesNeverCrash() {
+        var transcript = KiroV3Transcript()
+        transcript.consume(Data("not json".utf8))
+        transcript.consume(Data(#"{"payload":{"type":"usage_summary""#.utf8))
+        transcript.consume(Data("".utf8))
+        #expect(transcript.usages.isEmpty)
+    }
+
+    @Test func metadataReadsTheFolderModelAndTitle() throws {
+        let json = #"""
+        { "workspacePaths": ["/Users/me/app"], "title": "A session", "modelId": "auto",
+          "createdAt": "2026-10-01T09:00:00Z", "agentMode": "chat", "status": "idle" }
+        """#
+        let metadata = try #require(KiroV3Files.metadata(json: Data(json.utf8)))
+        #expect(metadata.folder == "/Users/me/app")
+        #expect(metadata.model == "auto")
+        #expect(metadata.title == "A session")
+        #expect(metadata.createdAt == KiroSession.date("2026-10-01T09:00:00Z"))
+        // A file that does not parse reads as nothing.
+        #expect(KiroV3Files.metadata(json: Data("[".utf8)) == nil)
+    }
 }
 
 @Suite("Claude's limits, as the status line script saves them")

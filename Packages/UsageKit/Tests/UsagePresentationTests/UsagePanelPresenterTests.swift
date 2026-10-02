@@ -10,6 +10,7 @@ import UsageData
 struct UsagePanelPresenterTests {
     var calendar: Calendar { OverlayPresenterTests.calendar }
     var presenter: UsagePanelPresenter { UsagePanelPresenter(formatter: UsageFormatter(calendar: calendar)) }
+    var format: UsageFormatter { UsageFormatter(calendar: calendar) }
 
     func all(_ report: UsageReport, _ period: UsagePeriod = .today) throws -> AllAgentsModel {
         guard case .all(let model) = presenter.panel(report, filter: .all, period: period).content else {
@@ -399,8 +400,53 @@ struct UsagePanelPresenterTests {
         let overview = presenter.limitRows(.kiro, limits: limits, period: .today, now: now)
         #expect(overview.map(\.used) == ["37%"])
         #expect(overview.map(\.freesUp) == ["Reset time unavailable"])
+        // Without a reset the bar still names the allowance, just with no reset part.
         #expect(presenter.limitBars(limits, period: .today, agent: .kiro, now: now).map(\.detail)
-            == ["Reset time unavailable"])
+            == ["37 of 100 credits"])
+    }
+
+    @Test func thePlanBarNamesTheAllowanceAndReset() {
+        // Monday 22 September 2026, 15:00 in London; the plan resets on 1 November.
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let reset = calendar.date(from: DateComponents(year: 2026, month: 11, day: 1))!
+        let plan = PlanUsage(
+            name: "KIRO POWER", creditsUsed: 1260, creditsLimit: 10000,
+            usedPercent: 13, resetsAt: reset, readAt: now
+        )
+        let limits = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil, plan: plan)
+        let bars = presenter.limitBars(limits, period: .month, agent: .kiro, now: now)
+        // Title: the plan name in title case with the used percentage.
+        #expect(bars.map(\.title) == ["Kiro Power 13%"])
+        let detail = bars.first?.detail
+        #expect(detail?.contains("1,260 of 10,000 credits") == true)
+        #expect(detail?.contains("resets") == true)
+        #expect(detail == "1,260 of 10,000 credits - resets 1 Nov - in 39d 10h")
+        #expect(bars.first?.fraction == 0.13)
+    }
+
+    @Test func thePlanBarWithAnAccountKeepsTheAllowanceDetail() {
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let reset = calendar.date(from: DateComponents(year: 2026, month: 11, day: 1))!
+        let plan = PlanUsage(
+            name: "KIRO POWER", creditsUsed: 1260, creditsLimit: 10000,
+            usedPercent: 13, resetsAt: reset, readAt: now
+        )
+        let limits = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil, plan: plan)
+        let bars = presenter.limitBars(limits, period: .month, agent: .kiro, now: now, account: "Work")
+        #expect(bars.map(\.title) == ["Work · Kiro Power 13%"])
+        #expect(bars.first?.detail == "1,260 of 10,000 credits - resets 1 Nov - in 39d 10h")
+    }
+
+    @Test func kiroWithAPlanDoesNotSayLimitsAreMissing() {
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let reset = calendar.date(from: DateComponents(year: 2026, month: 11, day: 1))!
+        let plan = PlanUsage(
+            name: "KIRO POWER", creditsUsed: 1260, creditsLimit: 10000,
+            usedPercent: 13, resetsAt: reset, readAt: now
+        )
+        let limits = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil, plan: plan)
+        let note = presenter.note(.kiro, used: nil, limits: limits)
+        #expect(note?.text.contains("limits") != true)
     }
 
     // MARK: - Frame 4: every agent, today
@@ -478,7 +524,7 @@ struct UsagePanelPresenterTests {
         // 125,619 tokens of the million, said as an estimate and marked, never as tokens used.
         #expect(kiro.tokens == "ctx ~126k")
         #expect(kiro.tokensIsEstimate)
-        #expect(kiro.spend == "72.5 cr")
+        #expect(kiro.spend == "72.5 CR · ~$2.90")
         // Claude has tokens, so its context never replaces them.
         let claude = try #require(model.rows.first { $0.agent == .claudeCode })
         #expect(claude.tokens == "1k")
@@ -502,11 +548,11 @@ struct UsagePanelPresenterTests {
         let kiro = try agent(usageReport(now: kiroNow, turns: kiroTurns), .kiro, .today)
         // 60 of 72.5 credits were Opus's. Models are named as the agent names them: "auto".
         #expect(kiro.models == [
-            ModelShareRowModel(name: "Opus 4.8", percent: "83%", credits: "60 cr"),
-            ModelShareRowModel(name: "auto", percent: "17%", credits: "12.5 cr"),
+            ModelShareRowModel(name: "Opus 4.8", percent: "83%", credits: "60 CR · ~$2.40"),
+            ModelShareRowModel(name: "auto", percent: "17%", credits: "12.5 CR · ~$0.50"),
         ])
         #expect(kiro.stats == [
-            StatModel(label: "Credits", value: "72.5 cr"), StatModel(label: "Time", value: "5m"),
+            StatModel(label: "Credits", value: "72.5 CR · ~$2.90"), StatModel(label: "Time", value: "5m"),
             StatModel(label: "Sessions", value: "1"), StatModel(label: "Prompts", value: "3"),
             StatModel(label: "Tool calls", value: "8"),
         ])
@@ -584,6 +630,64 @@ struct UsagePanelPresenterTests {
         #expect(all.tableTitle == "THIS WEEK")
         #expect(all.rows.first { $0.agent == .claudeCode }?.tokens == "1k")
         #expect(all.rows.first { $0.agent == .claudeCode }?.spend == "$11.00")
+    }
+
+    // MARK: - Kiro's credits timeline
+
+    /// A Kiro turn: no tokens, no dollar cost, billed in credits, as its Auto agent reports.
+    func kiroCreditTurn(_ id: String, at timestamp: Date, session: String, credits: Double, tag: WorkTag) -> Turn {
+        Turn(
+            id: id, timestamp: timestamp, agent: .kiro, sessionID: session, model: "auto", work: Work(tag: tag),
+            tokens: nil, cost: Cost(usd: nil), context: nil, credits: credits
+        )
+    }
+
+    @Test func kirosWeekPlotsCreditsPerDay() throws {
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let startOfToday = calendar.startOfDay(for: now)
+        let twoDaysAgo = calendar.date(byAdding: .day, value: -2, to: startOfToday)!
+        let tag = WorkTag(project: "shop", concern: "main")
+        let report = usageReport(now: now, turns: [
+            kiroCreditTurn("a", at: twoDaysAgo + 9 * 3600, session: "s1", credits: 4, tag: tag),
+            kiroCreditTurn("b", at: twoDaysAgo + 9 * 3600 + 5 * 60, session: "s1", credits: 2, tag: tag),
+            kiroCreditTurn("c", at: startOfToday + 10 * 3600, session: "s2", credits: 3, tag: tag),
+        ])
+        let model = try agent(report, .kiro, .week)
+        let chart = try #require(model.chart)
+        // No tokens, but credits, so the chart plots credits per day.
+        #expect(chart.title == "CREDITS PER DAY")
+        // The busiest day is two days ago with 6 credits; the caption names it with "CR".
+        #expect(chart.caption == "busiest \(format.weekday(twoDaysAgo)) · 6 CR")
+        // Bar heights follow the per-bucket credit sums: 6 two days ago, 3 today.
+        let twoDaysBar = try #require(chart.bars.first { $0.start == twoDaysAgo })
+        let todayBar = try #require(chart.bars.first { $0.start == startOfToday })
+        #expect(twoDaysBar.fraction == 1)
+        #expect(abs(todayBar.fraction - 3.0 / 6) < 1e-9)
+        #expect(todayBar.isCurrent == true)
+    }
+
+    @Test func selectingAKiroDayScopesTheCreditsToThatBucket() throws {
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let startOfToday = calendar.startOfDay(for: now)
+        let selectedDay = calendar.date(byAdding: .day, value: -2, to: startOfToday)!
+        let tag = WorkTag(project: "shop", concern: "main")
+        let report = usageReport(now: now, turns: [
+            kiroCreditTurn("a", at: selectedDay + 9 * 3600, session: "s1", credits: 4, tag: tag),
+            kiroCreditTurn("b", at: selectedDay + 9 * 3600 + 5 * 60, session: "s1", credits: 2, tag: tag),
+            kiroCreditTurn("c", at: startOfToday + 10 * 3600, session: "s2", credits: 3, tag: tag),
+        ])
+        let panel = presenter.panel(report, filter: .agent(.kiro), period: .week, selectedBucketStart: selectedDay)
+        let model = try #require({
+            if case .agent(let model) = panel.content { return model }
+            return nil
+        }())
+        #expect(panel.selectedBucketStart == selectedDay)
+        // The chart still plots credits, with the selected day marked.
+        #expect(model.chart?.title == "CREDITS PER DAY")
+        #expect(model.chart?.bars.filter(\.isSelected).map(\.start) == [selectedDay])
+        // The Credits stat is scoped to the selected day's 6 credits, not the week's 9.
+        let credits = try #require(model.stats.first { $0.label == "Credits" })
+        #expect(credits.value.contains("6 CR"))
     }
 
     // MARK: - Frame 6: Cursor's month
@@ -677,6 +781,59 @@ struct UsagePanelPresenterTests {
         #expect(table.limits.isEmpty)
     }
 
+    @Test func anOldOpenSessionsTimeIsClampedToTheSelectedPeriod() throws {
+        // A Kiro Auto session (no per-reply working time) open for 2 days and 8 hours, still
+        // working now. Before the fix, Today summed its whole 2d 8h life, which is impossible
+        // for one day. Today should now only count the part of its life that falls in today.
+        let now = kiroNow
+        let life: TimeInterval = 2 * 86_400 + 8 * 3600  // 2d 8h
+        let startedAt = now - life
+        let tag = WorkTag(project: "shop", concern: "main")
+        let records = UsageRecords(
+            turns: [], limits: [],
+            sessionEvents: [
+                SessionEvent(
+                    timestamp: startedAt, agent: .kiro, sessionID: "k", kind: .start, state: .working,
+                    activeDuration: 0, idleDuration: 0, work: tag
+                ),
+                SessionEvent(
+                    timestamp: now, agent: .kiro, sessionID: "k", kind: .active, state: .working,
+                    activeDuration: life, idleDuration: 0, work: tag,
+                    snapshot: SessionSnapshot(turnCount: 5, stateSince: now)
+                ),
+            ],
+            capturedAt: now
+        )
+        let settings = UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20)
+        let report = GenerateUsageReport(settings: settings, calendar: calendar)(records, now: now)
+
+        // The session's full active time is 2d 8h; the un-clamped bug showed that for Today.
+        let session = try #require(report.sessions.first { $0.summary.agent == .kiro }).summary
+        #expect(session.activeDuration == life)
+
+        // Today's window is from midnight to now (15:00), so the clamped share is that overlap,
+        // far below the full 2d 8h.
+        let today = try agent(report, .kiro, .today)
+        let todayTime = try #require(today.stats.first { $0.label == "Time" }).value
+        let todayOverlap = now.timeIntervalSince(calendar.startOfDay(for: now))
+        let expectedTodaySeconds = life * (todayOverlap / life)  // = todayOverlap
+        #expect(todayTime == format.duration(expectedTodaySeconds))
+        #expect(expectedTodaySeconds < life / 2)
+
+        // The All table's Today time cell is clamped the same way, not the full life.
+        let todayTable = try all(report, .today)
+        #expect(todayTable.rows.first { $0.agent == .kiro }?.time == format.duration(expectedTodaySeconds))
+
+        // Week and Month contain the whole 2d 8h life, so the All table shows the full active
+        // time there, larger than Today's clamped value. (The agent view defaults to the latest
+        // chart bucket, which omits open sessions, so the All table is the faithful surface.)
+        let weekTable = try all(report, .week)
+        let monthTable = try all(report, .month)
+        #expect(weekTable.rows.first { $0.agent == .kiro }?.time == format.duration(life))
+        #expect(monthTable.rows.first { $0.agent == .kiro }?.time == format.duration(life))
+        #expect(format.duration(expectedTodaySeconds) != format.duration(life))
+    }
+
     @Test func claudeWithoutItsStatusLineSaysHowToTurnItsLimitsOn() throws {
         let start = Date(timeIntervalSince1970: 1_790_000_000)
         let tag = WorkTag(project: "app", concern: "main")
@@ -701,5 +858,303 @@ struct UsagePanelPresenterTests {
         #expect(rows.last?.percent == "60%")
         #expect(rows.last?.agent == nil)
         #expect(presenter.whereRows(Array(work.prefix(3)), limit: 3).count == 3)
+    }
+
+    // MARK: - Local credit buckets no longer appear as a stat column
+
+    /// The local credit band used to be appended as extra stat columns, which overflowed the
+    /// stats row. It is gone now: the Kiro agent view shows its single main "Credits" stat and
+    /// no "on this Mac" column. The buckets still feed the credits timeline, not a stat.
+    @Test func theKiroAgentViewHasNoLocalCreditStatColumn() {
+        let now = Date(timeIntervalSince1970: 1_790_085_600)
+        let tag = WorkTag(project: "shop", concern: "main")
+        let kiro = Turn(
+            id: "k1", timestamp: now - 3600, agent: .kiro, sessionID: "k", model: "auto", work: Work(tag: tag),
+            tokens: nil, cost: Cost(usd: nil), context: nil, credits: 2.5
+        )
+        let buckets = CreditBuckets(
+            day: 2.5, bands: [CreditBuckets.Band(firstDay: 1, lastDay: 7, credits: 2.5)], currentBandIndex: 0
+        )
+        let records = UsageRecords(
+            turns: [kiro], limits: [], sessionEvents: [], capturedAt: now, localCreditBuckets: [.kiro: buckets]
+        )
+        let report = GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20), calendar: calendar
+        )(records, now: now)
+        guard case .agent(let model) = presenter.panel(report, filter: .agent(.kiro), period: .today).content else {
+            Issue.record("not the agent view"); return
+        }
+        // No "on this Mac" stat column, and the single main Credits stat stays.
+        #expect(!model.stats.contains { $0.label.contains("on this Mac") })
+        #expect(model.stats.contains { $0.label == "Credits" })
+    }
+
+    // MARK: - Task 1: the local credit caption below the chart (Kiro only)
+
+    /// A report with a Kiro credit turn and local buckets attached, built the same way the real
+    /// report threads `localCreditBuckets` into `AgentLimits.localCreditBuckets`.
+    func kiroLocalReport(buckets: CreditBuckets) -> UsageReport {
+        let now = kiroNow
+        let tag = WorkTag(project: "shop", concern: "main")
+        let turn = Turn(
+            id: "k1", timestamp: now - 3600, agent: .kiro, sessionID: "k", model: "auto", work: Work(tag: tag),
+            tokens: nil, cost: Cost(usd: nil), context: nil, credits: 2.5
+        )
+        let records = UsageRecords(
+            turns: [turn], limits: [], sessionEvents: [], capturedAt: now, localCreditBuckets: [.kiro: buckets]
+        )
+        return GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20), calendar: calendar
+        )(records, now: now)
+    }
+
+    @Test func kiroTodayShowsTheDaysLocalCreditCaptionWithOnThisMac() throws {
+        let buckets = CreditBuckets(
+            day: 12.4, bands: [CreditBuckets.Band(firstDay: 1, lastDay: 7, credits: 12.4)], currentBandIndex: 0
+        )
+        let model = try agent(kiroLocalReport(buckets: buckets), .kiro, .today)
+        let caption = try #require(model.localCredits?.caption)
+        #expect(caption == "Today - 12.4 CR - ~$0.50 on this Mac")
+        // The caption uses " - " separators, never an em dash.
+        #expect(!caption.contains("\u{2014}"))
+    }
+
+    @Test func kiroWeekShowsTheCurrentBandRangeAndCreditsOnThisMac() throws {
+        let buckets = CreditBuckets(
+            day: 12.4,
+            bands: [
+                CreditBuckets.Band(firstDay: 1, lastDay: 7, credits: 204),
+                CreditBuckets.Band(firstDay: 8, lastDay: 14, credits: 0),
+            ],
+            currentBandIndex: 0
+        )
+        let week = try agent(kiroLocalReport(buckets: buckets), .kiro, .week)
+        let month = try agent(kiroLocalReport(buckets: buckets), .kiro, .month)
+        #expect(week.localCredits?.caption == "Days 1-7 - 204 CR - ~$8.16 on this Mac")
+        #expect(month.localCredits?.caption == "Days 1-7 - 204 CR - ~$8.16 on this Mac")
+        #expect(week.localCredits?.caption.contains("\u{2014}") == false)
+    }
+
+    @Test func kiroWithoutACurrentBandOmitsTheWeekCaption() throws {
+        let buckets = CreditBuckets(
+            day: 12.4, bands: [CreditBuckets.Band(firstDay: 1, lastDay: 7, credits: 204)], currentBandIndex: nil
+        )
+        #expect(try agent(kiroLocalReport(buckets: buckets), .kiro, .week).localCredits == nil)
+    }
+
+    @Test func kiroWithNoDaysCreditsOmitsTheTodayCaption() throws {
+        let buckets = CreditBuckets(
+            day: 0, bands: [CreditBuckets.Band(firstDay: 1, lastDay: 7, credits: 204)], currentBandIndex: 0
+        )
+        #expect(try agent(kiroLocalReport(buckets: buckets), .kiro, .today).localCredits == nil)
+    }
+
+    @Test func aNonKiroAgentNeverGetsALocalCreditCaption() throws {
+        // Claude has tokens and no local buckets; its agent view carries no localCredits.
+        let report = usageReport(now: kiroNow, turns: [claudeTurn])
+        #expect(try agent(report, .claudeCode, .today).localCredits == nil)
+        #expect(try agent(report, .claudeCode, .week).localCredits == nil)
+        // Even if local buckets were somehow attached, the presenter gates on agent == .kiro.
+        let buckets = CreditBuckets(
+            day: 5, bands: [CreditBuckets.Band(firstDay: 1, lastDay: 7, credits: 5)], currentBandIndex: 0
+        )
+        let limits = AgentLimits(fiveHour: nil, weekly: nil, monthly: nil, localCreditBuckets: buckets)
+        #expect(presenter.localCredits(agent: .claudeCode, limits: limits, period: .today) == nil)
+        #expect(presenter.localCredits(agent: .codex, limits: limits, period: .week) == nil)
+        #expect(presenter.localCredits(agent: .cursor, limits: limits, period: .today) == nil)
+        // The same buckets for Kiro do produce a caption, confirming the gate is on the agent.
+        #expect(presenter.localCredits(agent: .kiro, limits: limits, period: .today)?.caption
+            == "Today - 5 CR - ~$0.20 on this Mac")
+    }
+
+    // MARK: - Task 2: one Kiro token estimate everywhere
+
+    /// A Kiro session whose files carry no precise tokens but do carry a transcript-text
+    /// estimate, open now, so it is in the period and the session panel shows "~Nk (est.)".
+    func kiroEstimateReport(input: Int, output: Int) -> UsageReport {
+        let now = kiroNow
+        let tag = WorkTag(project: "shop", concern: "main")
+        let records = UsageRecords(
+            turns: [],
+            limits: [],
+            sessionEvents: [
+                SessionEvent(
+                    timestamp: now - 1800, agent: .kiro, sessionID: "k", kind: .start, state: .working,
+                    activeDuration: 0, idleDuration: 0, work: tag
+                ),
+                SessionEvent(
+                    timestamp: now, agent: .kiro, sessionID: "k", kind: .active, state: .working,
+                    activeDuration: 1800, idleDuration: 0, work: tag,
+                    snapshot: SessionSnapshot(
+                        context: ContextUsage(used: 125_619, window: 1_000_000),
+                        turnCount: 3,
+                        estimatedTokens: TokenUsage(input: input, output: output)
+                    )
+                ),
+            ],
+            capturedAt: now
+        )
+        return GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20), calendar: calendar
+        )(records, now: now)
+    }
+
+    @Test func kiroUsagePanelEstimateMatchesTheSessionPanelsEstimateNotTheContext() throws {
+        // Estimate 40k input + 20k output = 60k, while the context reading is 126k. The two
+        // panels must agree, so the usage table shows the 60k estimate, not "ctx ~126k".
+        let report = kiroEstimateReport(input: 40_000, output: 20_000)
+        let table = try all(report, .today)
+        let kiro = try #require(table.rows.first { $0.agent == .kiro })
+        #expect(kiro.tokens == "~60k")
+        #expect(kiro.tokensIsEstimate)
+
+        // The session panel's estimated-tokens stat shows the same 60k.
+        let overlay = OverlayPresenter(formatter: format)
+        let panel = try #require(overlay.panel(report, sessionID: "k"))
+        let estimate = try #require(panel.stats.first { $0.label == "Tokens (est.)" })
+        #expect(estimate.value == "~60k")
+        // One number everywhere: the usage cell equals the session stat.
+        #expect(kiro.tokens == estimate.value)
+    }
+
+    @Test func kiroFallsBackToContextWhenNoEstimateIsAvailable() throws {
+        // No estimated tokens: the usage table keeps the context-derived "ctx ~" value.
+        let report = usageReport(now: kiroNow, turns: kiroTurns)
+        let kiro = try #require(try all(report, .today).rows.first { $0.agent == .kiro })
+        #expect(kiro.tokens == "ctx ~126k")
+        #expect(kiro.tokensIsEstimate)
+        #expect(presenter.estimatedTokensText(.kiro, report: report, periodStart: report.periods[.today]?.start) == nil)
+    }
+
+    @Test func theKiroEstimateIsNeverSummedIntoTheAllAgentsTotal() throws {
+        // Claude has a precise 1k; Kiro has only a 60k estimate. The total adds Claude only.
+        let now = kiroNow
+        let tag = WorkTag(project: "shop", concern: "main")
+        let records = UsageRecords(
+            turns: [claudeTurn],
+            limits: [],
+            sessionEvents: [
+                SessionEvent(
+                    timestamp: now - 1800, agent: .kiro, sessionID: "k", kind: .start, state: .working,
+                    activeDuration: 0, idleDuration: 0, work: tag
+                ),
+                SessionEvent(
+                    timestamp: now, agent: .kiro, sessionID: "k", kind: .active, state: .working,
+                    activeDuration: 1800, idleDuration: 0, work: tag,
+                    snapshot: SessionSnapshot(
+                        turnCount: 3, estimatedTokens: TokenUsage(input: 40_000, output: 20_000)
+                    )
+                ),
+            ],
+            capturedAt: now
+        )
+        let report = GenerateUsageReport(
+            settings: UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20), calendar: calendar
+        )(records, now: now)
+        let table = try all(report, .today)
+        #expect(table.rows.first { $0.agent == .kiro }?.tokens == "~60k")
+        #expect(table.total?.tokens == "1k")
+        #expect(table.total?.tokensIsEstimate == false)
+    }
+
+    @Test func aNonKiroAgentIsUnaffectedByTheEstimateUnification() throws {
+        // Claude reports precise tokens; its cell stays the count, never an estimate, and the
+        // Kiro-only helper returns nil for it.
+        let report = usageReport(now: kiroNow, turns: [claudeTurn])
+        let claude = try #require(try all(report, .today).rows.first { $0.agent == .claudeCode })
+        #expect(claude.tokens == "1k")
+        #expect(!claude.tokensIsEstimate)
+        #expect(presenter.estimatedTokensText(.claudeCode, report: report, periodStart: report.periods[.today]?.start) == nil)
+        #expect(presenter.estimatedTokensText(.codex, report: report, periodStart: report.periods[.today]?.start) == nil)
+        #expect(presenter.estimatedTokensText(.cursor, report: report, periodStart: report.periods[.today]?.start) == nil)
+    }
+
+    // MARK: - The two "where … went" breakdown sections
+
+    /// Two Claude turns on one work tag, four minutes apart (within the working-time gap), so
+    /// the work has non-zero time and a token total. Each tag gets its own session.
+    private func claudeWork(_ project: String, _ concern: String, tokens: Int, session: String) -> [Turn] {
+        let tag = WorkTag(project: project, concern: concern)
+        return [
+            usageTurn("\(session)-1", at: kiroNow - 1_800, session: session, model: "claude-opus-5",
+                      tokens: tokens / 2, cost: 1, tag: tag),
+            usageTurn("\(session)-2", at: kiroNow - 1_560, session: session, model: "claude-opus-5",
+                      tokens: tokens - tokens / 2, cost: 1, tag: tag),
+        ]
+    }
+
+    @Test func aTokenAgentGetsASecondSectionRankedByTokens() throws {
+        let turns = claudeWork("Alpha", "big", tokens: 500_000, session: "a")
+            + claudeWork("Beta", "mid", tokens: 300_000, session: "b")
+            + claudeWork("Gamma", "small", tokens: 100_000, session: "c")
+        let model = try agent(usageReport(now: kiroNow, turns: turns), .claudeCode, .today)
+        #expect(model.whereMetricTitle == "WHERE THE TOKENS WENT")
+        // Ranked by tokens, descending, with the token value in each row.
+        #expect(model.whereMetric.map(\.label) == ["Alpha · big", "Beta · mid", "Gamma · small"])
+        #expect(model.whereMetric.map(\.value) == ["500k", "300k", "100k"])
+        #expect(model.whereMetric.map(\.percent) == ["56%", "33%", "11%"])
+    }
+
+    @Test func aCreditAgentGetsASecondSectionRankedByCredits() throws {
+        let tagMain = WorkTag(project: "shop", concern: "main")
+        let tagApi = WorkTag(project: "shop", concern: "api")
+        let turns = [
+            kiroCreditTurn("m1", at: kiroNow - 1_800, session: "m", credits: 40, tag: tagMain),
+            kiroCreditTurn("m2", at: kiroNow - 1_560, session: "m", credits: 20, tag: tagMain),
+            kiroCreditTurn("a1", at: kiroNow - 1_800, session: "a", credits: 8, tag: tagApi),
+            kiroCreditTurn("a2", at: kiroNow - 1_560, session: "a", credits: 2, tag: tagApi),
+        ]
+        let model = try agent(usageReport(now: kiroNow, turns: turns), .kiro, .today)
+        #expect(model.whereMetricTitle == "WHERE THE CREDITS WENT")
+        // Ranked by credits (60 then 10), with "N CR · ~$X" values.
+        #expect(model.whereMetric.map(\.label) == ["shop · main", "shop · api"])
+        #expect(model.whereMetric.map(\.value) == ["60 CR · ~$2.40", "10 CR · ~$0.40"])
+        #expect(model.whereMetric.map(\.percent) == ["86%", "14%"])
+    }
+
+    @Test func anAgentWithNeitherTokensNorCreditsHasNoSecondSection() async throws {
+        // Cursor reports no tokens and no credits in the fake report, so only the time section
+        // shows: the metric title is nil and the metric rows are empty.
+        let report = try await OverlayPresenterTests.fakeReport()
+        let cursor = try agent(report, .cursor, .today)
+        #expect(cursor.whereMetricTitle == nil)
+        #expect(cursor.whereMetric.isEmpty)
+        // The time section is unaffected.
+        #expect(!cursor.whereRows.isEmpty)
+    }
+
+    @Test func bothSectionsExposeTheFullListAndACollapsedCountForExpanding() throws {
+        // Five pieces of work, more than the collapsed count, so the data to expand must be
+        // present: the full ordered list, a collapsed count, and a "+N more" aggregate.
+        let turns = claudeWork("P1", "a", tokens: 500_000, session: "s1")
+            + claudeWork("P2", "b", tokens: 400_000, session: "s2")
+            + claudeWork("P3", "c", tokens: 300_000, session: "s3")
+            + claudeWork("P4", "d", tokens: 200_000, session: "s4")
+            + claudeWork("P5", "e", tokens: 100_000, session: "s5")
+        let model = try agent(usageReport(now: kiroNow, turns: turns), .claudeCode, .today)
+
+        // The time section carries every row, not a pre-truncated list.
+        #expect(model.whereRows.count == 5)
+        // With the models column present, the collapsed count is agentWhereRows - 1 = 1.
+        #expect(model.whereCollapsedCount == 1)
+        // The "+N more" aggregate sums the four hidden rows.
+        #expect(model.whereMore?.label == "4 more")
+
+        // The metric section mirrors it: full list, collapsed count, and aggregate.
+        #expect(model.whereMetric.count == 5)
+        #expect(model.whereMetricCollapsedCount == 1)
+        #expect(model.whereMetricMore?.label == "4 more")
+        // The aggregate's value is the sum of the four hidden works' tokens: 1,000,000.
+        #expect(model.whereMetricMore?.value == "1M")
+    }
+
+    @Test func aSmallSectionHasNoMoreRowAndShowsEveryItem() throws {
+        // One piece of work: nothing to collapse, so there is no "+N more" aggregate.
+        let turns = claudeWork("Solo", "x", tokens: 120_000, session: "s")
+        let model = try agent(usageReport(now: kiroNow, turns: turns), .claudeCode, .today)
+        #expect(model.whereRows.count == 1)
+        #expect(model.whereMore == nil)
+        #expect(model.whereMetric.count == 1)
+        #expect(model.whereMetricMore == nil)
     }
 }

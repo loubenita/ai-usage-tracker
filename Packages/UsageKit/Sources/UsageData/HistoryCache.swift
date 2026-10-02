@@ -12,12 +12,13 @@ import Foundation
 /// Kept in `~/Library/Application Support/AIUsageTracker/history-cache.json`. A cache written
 /// by another version of the app is ignored rather than trusted.
 struct HistoryCache: Codable {
-    static let version = 1
+    static let version = 2
 
     var version = HistoryCache.version
     var mainTranscripts: [String: IncrementalFileStore<ClaudeTranscript>.Entry] = [:]
     var subagentTranscripts: [String: IncrementalFileStore<ClaudeTranscript>.Entry] = [:]
     var rollouts: [String: IncrementalFileStore<CodexRollout>.Entry] = [:]
+    var kiroV3Transcripts: [String: IncrementalFileStore<KiroV3Transcript>.Entry] = [:]
 
     static func path(homeDirectory: String) -> String {
         homeDirectory + "/Library/Application Support/AIUsageTracker/history-cache.json"

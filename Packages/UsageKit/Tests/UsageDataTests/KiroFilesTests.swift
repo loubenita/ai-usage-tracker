@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UsageDomain
 @testable import UsageData
 
 /// A running `kiro-cli` is matched to its session file by folder and by when the file changed.
@@ -46,6 +47,11 @@ struct KiroFilesTests {
                 [.modificationDate: KiroFilesTests.started.addingTimeInterval(seconds)], ofItemAtPath: path
             )
             return path
+        }
+
+        /// Writes the sibling `<id>.jsonl` transcript beside a session's metadata file.
+        func writeTranscript(_ id: String, lines: String) throws {
+            try lines.write(toFile: sessions + "/" + id + ".jsonl", atomically: true, encoding: .utf8)
         }
 
         func found(in folder: String) -> String? {
@@ -116,5 +122,31 @@ struct KiroFilesTests {
         let files = KiroFiles(directory: folders.sessions)
         #expect(files.session(startedAt: Self.started, folder: folders.project, excluding: [])?.path == newer)
         #expect(files.session(startedAt: Self.started, folder: folders.project, excluding: [newer])?.path == older)
+    }
+
+    @Test func theSiblingTranscriptPopulatesTheEstimate() throws {
+        let folders = try Folders.make()
+        defer { folders.remove() }
+        try folders.write("a", cwd: folders.project)
+        try folders.writeTranscript("a", lines: #"""
+        {"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"abcdefgh"}]}}
+        {"version":1,"kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"wxyz"}]}}
+        """#)
+        let found = try #require(
+            KiroFiles(directory: folders.sessions).session(startedAt: Self.started, folder: folders.project, excluding: [])
+        )
+        // The 84-character Prompt line gives 34 input tokens (84/2.5 = 33.6), and the
+        // 90-character AssistantMessage line gives 36 output tokens (90/2.5 = 36).
+        #expect(found.session.estimatedTokens == TokenUsage(input: 34, output: 36))
+    }
+
+    @Test func aSessionWithoutATranscriptHasNoEstimate() throws {
+        let folders = try Folders.make()
+        defer { folders.remove() }
+        try folders.write("a", cwd: folders.project)
+        let found = try #require(
+            KiroFiles(directory: folders.sessions).session(startedAt: Self.started, folder: folders.project, excluding: [])
+        )
+        #expect(found.session.estimatedTokens == nil)
     }
 }

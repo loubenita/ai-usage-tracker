@@ -116,6 +116,7 @@ struct HistoryCacheTests {
             UsageHistory(
                 homeDirectory: home, claudeDirectory: home + "/.claude",
                 codex: CodexFiles(directory: home + "/.codex"), kiro: KiroFiles(directory: home + "/.kiro/sessions/cli"),
+                kiroV3: KiroV3Files(directory: home + "/.kiro/sessions"),
                 minimumWorkingTime: 0, cachePath: cachePath
             )
         }
@@ -141,6 +142,7 @@ struct HistoryCacheTests {
         let history = UsageHistory(
             homeDirectory: home, claudeDirectory: home + "/.claude",
             codex: CodexFiles(directory: home + "/.codex"), kiro: KiroFiles(directory: home + "/.kiro/sessions/cli"),
+            kiroV3: KiroV3Files(directory: home + "/.kiro/sessions"),
             minimumWorkingTime: 0, cachePath: cachePath
         )
         #expect(history.latest().isComplete == false)

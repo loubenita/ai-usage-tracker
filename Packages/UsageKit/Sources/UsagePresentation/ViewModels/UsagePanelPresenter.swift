@@ -108,14 +108,21 @@ public struct UsagePanelPresenter: Sendable {
         period: UsagePeriod,
         agents: [Agent]
     ) -> AllAgentsModel {
+        let periodStart = usage?.start
         let rows = agents.compactMap { agent -> AgentTableRowModel? in
             let used = usage?.usage(of: agent)
-            let time = workingTime(used, agent: agent, report: report)
+            let time = workingTime(used, agent: agent, report: report, periodStart: periodStart)
             guard used != nil || time > 0 else { return nil }
             let tokens = used?.tokens.map(format.tokens)
             // An agent with no tokens but a context reading shows how full its context is, marked
             // as an estimate, in place of "n/a". It is not tokens used, so no total adds it up.
-            let estimate = tokens == nil ? used?.context.map(contextEstimate) : nil
+            // Kiro reports no precise tokens; it shows the same transcript-text estimate the
+            // session panel does ("~Nk"), so one Kiro number appears everywhere, and only falls
+            // back to the context reading ("ctx ~Nk") when no estimate is available.
+            let estimate = tokens == nil
+                ? (estimatedTokensText(agent, report: report, periodStart: periodStart)
+                    ?? used?.context.map(contextEstimate))
+                : nil
             return AgentTableRowModel(
                 agent: agent, name: agent.displayName, time: timeText(time), tokens: tokens ?? estimate,
                 spend: spend(used), tokensIsEstimate: tokens == nil && estimate != nil
@@ -127,7 +134,7 @@ public struct UsagePanelPresenter: Sendable {
         let total = rows.count > 1 ? AgentTableRowModel(
             agent: nil, name: "All agents",
             time: timeText(agents.reduce(0) {
-                $0 + workingTime(usage?.usage(of: $1), agent: $1, report: report)
+                $0 + workingTime(usage?.usage(of: $1), agent: $1, report: report, periodStart: periodStart)
             }),
             tokens: tokens.isEmpty ? nil : format.tokens(tokens.reduce(0, +)),
             spend: costs.isEmpty ? nil : format.usd(costs.reduce(0, +))
@@ -283,6 +290,13 @@ public struct UsagePanelPresenter: Sendable {
                 credits: share.credits.map(creditsText)
             )
         }
+        // Where the time went always shows; the second section ranks the same work by tokens, or
+        // by credits for an agent that bills in them (Kiro), and is omitted when it reports
+        // neither. A narrower collapsed count when the models column shares the row.
+        let byWork = usage?.byWork ?? []
+        let collapsed = models.isEmpty ? Self.allWhereRows : Self.agentWhereRows
+        let timeSection = whereFull(byWork, limit: collapsed)
+        let metricSection = whereByMetric(byWork, limit: collapsed)
         return AgentUsageModel(
             agent: agent,
             note: accountsWithoutReadings.isEmpty
@@ -303,14 +317,50 @@ public struct UsagePanelPresenter: Sendable {
                     )
                 },
             stats: hasTokens
-                ? tokenStats(used, agent: agent, report: report, includesOpenSessions: selectedBucketStart == nil)
-                : activityStats(used, open: open, report: report, includesOpenSessions: selectedBucketStart == nil),
+                ? tokenStats(used, agent: agent, report: report, includesOpenSessions: selectedBucketStart == nil, periodStart: report.periods[period]?.start)
+                : activityStats(used, open: open, report: report, includesOpenSessions: selectedBucketStart == nil, periodStart: report.periods[period]?.start),
             chart: fullUsage.flatMap {
-                chart($0, period: period, tokens: hasTokens, now: report.now, selectedBucketStart: selectedBucketStart)
+                chart($0, period: period, mode: chartMode(hasTokens: hasTokens, usage: $0), now: report.now, selectedBucketStart: selectedBucketStart)
             },
             models: Array(models),
-            whereRows: whereRows(usage?.byWork ?? [], limit: models.isEmpty ? Self.allWhereRows : Self.agentWhereRows)
+            whereRows: timeSection.rows,
+            whereCollapsedCount: timeSection.collapsedCount,
+            whereMore: timeSection.more,
+            whereMetric: metricSection?.rows ?? [],
+            whereMetricTitle: metricSection?.title,
+            whereMetricCollapsedCount: metricSection?.collapsedCount ?? 0,
+            whereMetricMore: metricSection?.more,
+            localCredits: localCredits(agent: agent, limits: limits, period: period)
         )
+    }
+
+    /// A faint "on this Mac" credit line below the chart, for an agent that bills in credits
+    /// (Kiro) when its local buckets carry something to show. Today shows the day's credits;
+    /// Week and Month show the current seven-day band's range and credits. Nil for every other
+    /// agent, when there are no local buckets, or when the current band is unknown. The sums are
+    /// local to this Mac, so the label always ends "on this Mac" to keep them apart from the
+    /// plan total.
+    func localCredits(agent: Agent, limits: AgentLimits, period: UsagePeriod) -> LocalCreditsModel? {
+        guard agent == .kiro, let buckets = limits.localCreditBuckets else { return nil }
+        let scope = CreditBuckets.scopeLabel
+        switch period {
+        case .today:
+            guard buckets.day > 0 else { return nil }
+            return LocalCreditsModel(caption: "Today - \(creditsLine(buckets.day)) \(scope)")
+        case .week, .month:
+            guard let index = buckets.currentBandIndex, buckets.bands.indices.contains(index) else { return nil }
+            let band = buckets.bands[index]
+            guard band.credits > 0 else { return nil }
+            let range = "Days \(band.firstDay)-\(band.lastDay)"
+            return LocalCreditsModel(caption: "\(range) - \(creditsLine(band.credits)) \(scope)")
+        }
+    }
+
+    /// "12.4 CR - ~$0.50": credits with the dollar estimate, joined with " - " for the local
+    /// credit caption. Kept apart from `creditsText`, whose "·" separator the stats and models
+    /// columns use.
+    private func creditsLine(_ credits: Double) -> String {
+        "\(format.credits(credits)) CR - ~\(format.usd(format.creditsUSD(credits)))"
     }
 
     /// What the agent does not share, said once at the top, so the missing numbers are not a
@@ -353,11 +403,14 @@ public struct UsagePanelPresenter: Sendable {
         let standings = visibleStandings(limits.standings, period: period).sorted { rank($0.kind) < rank($1.kind) }
         var bars: [(kind: LimitStanding.Kind, bar: BarRowModel)] = []
         for (index, standing) in standings.enumerated() {
-            let detail = standing.resetsAt.map { reset in
+            // A credit plan (Kiro) names its allowance and credits used; every other window
+            // keeps the generic name and the plain reset detail.
+            let name = planName(standing, limits: limits) ?? OverlayPresenter.limitName(standing.kind)
+            let detail = planDetail(standing, now: now) ?? standing.resetsAt.map { reset in
                 "Resets \(format.moment(reset, now: now)) · in \(format.duration(reset.timeIntervalSince(now)))"
             } ?? "Reset time unavailable"
             bars.append((standing.kind, BarRowModel(
-                title: "\(who)\(OverlayPresenter.limitName(standing.kind)) \(format.percentPoints(standing.usedPercent))",
+                title: "\(who)\(name) \(format.percentPoints(standing.usedPercent))",
                 detail: detail,
                 fraction: standing.usedPercent / 100,
                 highlightFraction: nil,
@@ -432,6 +485,42 @@ public struct UsagePanelPresenter: Sendable {
         }
     }
 
+    /// A credit plan's title uses its own name in title case ("Kiro Power"), falling back to
+    /// nil so the caller keeps the generic limit name. Only the plan kind carries a name.
+    private func planName(_ standing: LimitStanding, limits: AgentLimits) -> String? {
+        guard standing.kind == .plan, let name = limits.plan?.name else { return nil }
+        return format.planName(name)
+    }
+
+    /// A credit plan's detail: credits used of the allowance, then the reset. "1,260 of 10,000
+    /// credits - resets 1 Nov - in 30 days", or just "1,260 of 10,000 credits" with no reset.
+    /// nil for any other kind, so the caller shows its own reset detail.
+    private func planDetail(_ standing: LimitStanding, now: Date) -> String? {
+        guard standing.kind == .plan, let used = standing.creditsUsed, let limit = standing.creditsLimit else {
+            return nil
+        }
+        let credits = "\(format.credits(used)) of \(format.credits(limit)) credits"
+        guard let reset = standing.resetsAt else { return credits }
+        return "\(credits) - resets \(format.moment(reset, now: now)) - in \(format.duration(reset.timeIntervalSince(now)))"
+    }
+
+    /// The account-usage cache only contains percentages. It has neither a reset timestamp nor
+    /// a way to say which window those percentages still belong to, so after fifteen minutes it
+    /// cannot safely describe a live limit. A status-line reading with a future `resetsAt` wins
+    /// over this cache through `limits` above and remains visible for its own account.
+    func currentSnapshot(_ snapshot: AccountUsageSnapshot?, now: Date) -> AccountUsageSnapshot? {
+        guard let snapshot, now.timeIntervalSince(snapshot.readAt) <= 15 * 60 else { return nil }
+        return snapshot
+    }
+
+    func snapshotValues(_ snapshot: AccountUsageSnapshot, period: UsagePeriod) -> [(String, Double?)] {
+        switch period {
+        case .today: [("5-hour", snapshot.fiveHourPercent)]
+        case .week: [("week", snapshot.weeklyPercent)]
+        case .month: []
+        }
+    }
+
     /// Each period shows the limit that runs over it: Today the 5-hour window, Week the weekly
     /// limit, and Month only a monthly allowance, since neither rolling window says anything
     /// about a month.
@@ -448,7 +537,8 @@ public struct UsagePanelPresenter: Sendable {
             creditsUsedThisMonth: limits.creditsUsedThisMonth,
             weeklyUsedToday: showsWeek ? limits.weeklyUsedToday : nil,
             weeklyUsedByDay: showsWeek ? limits.weeklyUsedByDay : nil,
-            plan: limits.plan, creditsUsedToday: limits.creditsUsedToday, creditsPerDayLeft: limits.creditsPerDayLeft
+            plan: limits.plan, creditsUsedToday: limits.creditsUsedToday, creditsPerDayLeft: limits.creditsPerDayLeft,
+            localCreditBuckets: limits.localCreditBuckets
         )
     }
 
@@ -476,9 +566,12 @@ public struct UsagePanelPresenter: Sendable {
 
     /// Spent, Tokens, Time and Sessions, for an agent that reports tokens.
     func tokenStats(
-        _ used: AgentPeriodUsage?, agent: Agent, report: UsageReport, includesOpenSessions: Bool = true
+        _ used: AgentPeriodUsage?, agent: Agent, report: UsageReport,
+        includesOpenSessions: Bool = true, periodStart: Date? = nil
     ) -> [StatModel] {
-        let time = workingTime(used, agent: agent, report: report, includesOpenSessions: includesOpenSessions)
+        let time = workingTime(
+            used, agent: agent, report: report, includesOpenSessions: includesOpenSessions, periodStart: periodStart
+        )
         return [
             spend(used).map { StatModel(label: used?.costUSD != nil ? "Spent" : "Credits", value: $0) },
             used?.tokens.map { StatModel(label: "Tokens", value: format.tokens($0)) },
@@ -491,13 +584,20 @@ public struct UsagePanelPresenter: Sendable {
     /// Credits only for an agent that bills in them. An agent that records nothing per reply is
     /// measured by its open sessions.
     func activityStats(
-        _ used: AgentPeriodUsage?, open: [SessionSummary], report: UsageReport, includesOpenSessions: Bool = true
+        _ used: AgentPeriodUsage?, open: [SessionSummary], report: UsageReport,
+        includesOpenSessions: Bool = true, periodStart: Date? = nil
     ) -> [StatModel] {
         let recorded = (used?.turnCount ?? 0) > 0
-        let time = recorded ? used?.workingTime ?? 0 : includesOpenSessions ? open.reduce(0) { $0 + $1.activeDuration } : 0
-        let sessions = recorded ? used?.sessionCount ?? 0 : includesOpenSessions ? open.count : 0
-        let prompts = recorded ? used?.turnCount ?? 0 : includesOpenSessions ? open.reduce(0) { $0 + $1.turnCount } : 0
-        let toolCalls = recorded ? used?.toolCalls : includesOpenSessions ? open.compactMap(\.activity?.toolCalls).reduce(0, +) : nil
+        // A session with no overlap in the selected period should not inflate the period's
+        // counts, so sessions, prompts and tool calls only count sessions whose active span
+        // touches the period; the time is clamped to that same overlap.
+        let inPeriod = open.filter { periodActiveDuration($0, periodStart: periodStart, now: report.now) > 0 }
+        let fallbackSessions = periodStart == nil ? open : inPeriod
+        let time = recorded ? used?.workingTime ?? 0
+            : includesOpenSessions ? open.reduce(0) { $0 + periodActiveDuration($1, periodStart: periodStart, now: report.now) } : 0
+        let sessions = recorded ? used?.sessionCount ?? 0 : includesOpenSessions ? fallbackSessions.count : 0
+        let prompts = recorded ? used?.turnCount ?? 0 : includesOpenSessions ? fallbackSessions.reduce(0) { $0 + $1.turnCount } : 0
+        let toolCalls = recorded ? used?.toolCalls : includesOpenSessions ? fallbackSessions.compactMap(\.activity?.toolCalls).reduce(0, +) : nil
         return [
             used?.credits.map { StatModel(label: "Credits", value: creditsText($0)) },
             time >= 60 ? StatModel(label: "Time", value: format.duration(time)) : nil,
@@ -507,22 +607,49 @@ public struct UsagePanelPresenter: Sendable {
         ].compactMap { $0 }
     }
 
-    /// Tokens, or hours for an agent with no tokens: a bar a day on Week, a week on Month.
-    /// Today has no chart, and a chart with nothing in it is left out.
+    /// How a chart bar's height is measured. An agent that reports tokens plots them; one that
+    /// bills in credits with none reported (Kiro) plots its credits; anything else plots the
+    /// hours it worked.
+    enum ChartMode {
+        case tokens, credits, hours
+    }
+
+    /// Tokens if the agent reports them, else credits if it billed any over the period, else the
+    /// hours it worked. Kiro's Auto agent reports no tokens but bills in credits, so its chart
+    /// plots credits.
+    func chartMode(hasTokens: Bool, usage: PeriodUsage) -> ChartMode {
+        if hasTokens { return .tokens }
+        if usage.buckets.contains(where: { $0.credits > 0 }) { return .credits }
+        return .hours
+    }
+
+    /// Tokens, credits for an agent that bills in them (Kiro), or hours for an agent with
+    /// neither: a bar a day on Week, a week on Month. Today has no chart, and a chart with
+    /// nothing in it is left out.
     func chart(
         _ usage: PeriodUsage,
         period: UsagePeriod,
-        tokens: Bool,
+        mode: ChartMode,
         now: Date,
         selectedBucketStart: Date?
     ) -> ChartModel? {
         guard period != .today, !usage.buckets.isEmpty else { return nil }
-        let values = usage.buckets.map { tokens ? Double($0.tokens) : $0.workingTime }
+        let values = usage.buckets.map { bucket -> Double in
+            switch mode {
+            case .tokens: Double(bucket.tokens)
+            case .credits: bucket.credits
+            case .hours: bucket.workingTime
+            }
+        }
         guard let top = values.max(), top > 0 else { return nil }
         let busiest = values.firstIndex(of: top)
         let last = values.count - 1
         func value(_ index: Int) -> String {
-            tokens ? format.tokens(usage.buckets[index].tokens) : format.hours(usage.buckets[index].workingTime)
+            switch mode {
+            case .tokens: format.tokens(usage.buckets[index].tokens)
+            case .credits: "\(format.credits(usage.buckets[index].credits)) CR"
+            case .hours: format.hours(usage.buckets[index].workingTime)
+            }
         }
         let bars = usage.buckets.indices.map { index in
             let start = max(usage.buckets[index].start, usage.start)
@@ -539,7 +666,11 @@ public struct UsagePanelPresenter: Sendable {
                 isSelected: usage.buckets[index].start == selectedBucketStart
             )
         }
-        let unit = tokens ? "TOKENS" : "HOURS"
+        let unit = switch mode {
+        case .tokens: "TOKENS"
+        case .credits: "CREDITS"
+        case .hours: "HOURS"
+        }
         return ChartModel(
             title: period == .week ? "\(unit) PER DAY" : "\(unit) PER WEEK",
             caption: period == .week
@@ -552,13 +683,34 @@ public struct UsagePanelPresenter: Sendable {
     // MARK: - Shared
 
     /// The period's working time, or for an agent that records nothing per reply, the time its
-    /// open sessions have been active.
+    /// open sessions have been active. When `periodStart` is given, each open session's active
+    /// time is clamped to its overlap with the period, so a session open for days does not add
+    /// its whole life to Today. When `periodStart` is nil the full active time is used.
     func workingTime(
-        _ used: AgentPeriodUsage?, agent: Agent, report: UsageReport, includesOpenSessions: Bool = true
+        _ used: AgentPeriodUsage?, agent: Agent, report: UsageReport,
+        includesOpenSessions: Bool = true, periodStart: Date? = nil
     ) -> TimeInterval {
         if let used, used.workingTime > 0 { return used.workingTime }
         guard includesOpenSessions else { return 0 }
-        return report.sessions.map(\.summary).filter { $0.agent == agent }.reduce(0) { $0 + $1.activeDuration }
+        let open = report.sessions.map(\.summary).filter { $0.agent == agent }
+        return open.reduce(0) { $0 + periodActiveDuration($1, periodStart: periodStart, now: report.now) }
+    }
+
+    /// An open session's active time within the selected period. `activeDuration` is a scalar
+    /// over the session's whole life, not a timeline, so the in-period share is approximated by
+    /// the fraction of the session's life that falls inside `[periodStart, now]`. A session that
+    /// is still open counts as present up to `now`, since `lastActivityAt` can lag (an agent
+    /// that writes no per-reply record leaves it at the start). With no `periodStart` the full
+    /// active time is returned unchanged.
+    func periodActiveDuration(_ session: SessionSummary, periodStart: Date?, now: Date) -> TimeInterval {
+        guard let periodStart else { return session.activeDuration }
+        let lifeEnd = session.state == .ended ? session.lastActivityAt : max(session.lastActivityAt, now)
+        let spanStart = max(session.startedAt, periodStart)
+        let spanEnd = min(lifeEnd, now)
+        guard spanEnd > spanStart else { return 0 }
+        let lifeSpan = max(lifeEnd.timeIntervalSince(session.startedAt), 1)
+        let overlapFraction = min(max(spanEnd.timeIntervalSince(spanStart) / lifeSpan, 0), 1)
+        return session.activeDuration * overlapFraction
     }
 
     private func timeText(_ time: TimeInterval) -> String {
@@ -571,14 +723,31 @@ public struct UsagePanelPresenter: Sendable {
         return used?.credits.map(creditsText)
     }
 
-    /// "12.4 cr", "3,917 cr".
+    /// "12.4 CR · ~$0.50", "3,917 CR · ~$156.68": credits with the dollar estimate beside them.
     private func creditsText(_ credits: Double) -> String {
-        "\(format.credits(credits)) cr"
+        format.creditsWithUSD(credits)
     }
 
     /// "ctx ~126k": how full the context is now, said as an estimate because it is not tokens used.
     private func contextEstimate(_ context: ContextUsage) -> String {
         "ctx ~\(format.tokens(context.used))"
+    }
+
+    /// "~126k": the transcript-text token estimate for an agent whose files carry no precise
+    /// counts (Kiro's Auto), summed over the agent's open sessions that touch the period, so the
+    /// usage panel shows the same figure the session panel does. Only Kiro has such estimates
+    /// today, and the sum is input-plus-output only, never a count and never added to a total.
+    /// Nil when the agent is not Kiro or no session carries an estimate for the period.
+    func estimatedTokensText(_ agent: Agent, report: UsageReport, periodStart: Date?) -> String? {
+        guard agent == .kiro else { return nil }
+        let sessions = report.sessions.map(\.summary).filter {
+            $0.agent == agent && periodActiveDuration($0, periodStart: periodStart, now: report.now) > 0
+        }
+        let total = sessions.reduce(0) { sum, summary in
+            guard let estimate = summary.estimatedTokens else { return sum }
+            return sum + (estimate.input ?? 0) + (estimate.output ?? 0)
+        }
+        return total > 0 ? "~\(format.tokens(total))" : nil
     }
 
     /// The top pieces of work by time, then one row adding up the rest.
@@ -604,5 +773,98 @@ public struct UsagePanelPresenter: Sendable {
             ))
         }
         return rows
+    }
+
+    /// Where the time went as the full ordered list, plus the number of itemized rows to show
+    /// while collapsed (`limit - 1`, leaving room for the "+N more" row) and that aggregate row.
+    /// The view shows the collapsed slice and the aggregate, or expands to every row. `more` is
+    /// nil when nothing is hidden at the collapsed count.
+    func whereFull(_ work: [WorkTime], limit: Int)
+        -> (rows: [TimeRowModel], collapsedCount: Int, more: TimeRowModel?)
+    {
+        let rows = work.map { item in
+            TimeRowModel(
+                id: workID(item.tag),
+                agent: item.agent,
+                label: workLabel(item.tag),
+                percent: format.percent(item.share),
+                time: format.duration(item.workingTime)
+            )
+        }
+        let collapsedCount = max(limit - 1, 0)
+        let hidden = work.dropFirst(collapsedCount)
+        let more = work.count > limit && !hidden.isEmpty
+            ? TimeRowModel(
+                id: "more", agent: nil, label: "\(hidden.count) more",
+                percent: format.percent(hidden.reduce(0) { $0 + $1.share }),
+                time: format.duration(hidden.reduce(0) { $0 + $1.workingTime })
+            )
+            : nil
+        return (rows, collapsedCount, more)
+    }
+
+    /// Which metric the second "where … went" section ranks by for this work: tokens when any
+    /// of the work reports a token count, else credits when any bills them (Kiro), else none.
+    enum WorkMetric { case tokens, credits }
+
+    private static func metric(of work: [WorkTime]) -> WorkMetric? {
+        // Credits are an agent's real billed unit (Kiro), so prefer them. Token agents that
+        // bill no credits (Claude, Codex, Cursor) still get a tokens section.
+        if work.contains(where: { $0.credits != nil }) { return .credits }
+        if work.contains(where: { $0.tokens != nil }) { return .tokens }
+        return nil
+    }
+
+    /// The second breakdown section, ranked by tokens or credits. Nil when the work reports
+    /// neither, so the view shows only the time section. Rows carry the work's share of the
+    /// metric and its value (tokens as "280k", credits as "61.7 CR · ~$2.47"); the collapsed
+    /// count and "+N more" aggregate mirror the time section so both expand the same way.
+    func whereByMetric(_ work: [WorkTime], limit: Int)
+        -> (title: String, rows: [WorkMetricRowModel], collapsedCount: Int, more: WorkMetricRowModel?)?
+    {
+        guard let metric = Self.metric(of: work) else { return nil }
+        let title = metric == .tokens ? "WHERE THE TOKENS WENT" : "WHERE THE CREDITS WENT"
+        func amount(_ item: WorkTime) -> Double {
+            switch metric {
+            case .tokens: Double(item.tokens ?? 0)
+            case .credits: item.credits ?? 0
+            }
+        }
+        func valueText(_ item: WorkTime) -> String {
+            switch metric {
+            case .tokens: format.tokens(item.tokens)
+            case .credits: creditsText(item.credits ?? 0)
+            }
+        }
+        let ranked = work.sorted { (amount($0), $0.tag.concern) > (amount($1), $1.tag.concern) }
+        let total = ranked.reduce(0) { $0 + amount($1) }
+        func share(_ item: WorkTime) -> String { format.percent(total > 0 ? amount(item) / total : 0) }
+        let rows = ranked.map { item in
+            WorkMetricRowModel(
+                id: workID(item.tag), agent: item.agent, label: workLabel(item.tag),
+                percent: share(item), value: valueText(item)
+            )
+        }
+        let collapsedCount = max(limit - 1, 0)
+        let hidden = ranked.dropFirst(collapsedCount)
+        let more = ranked.count > limit && !hidden.isEmpty
+            ? WorkMetricRowModel(
+                id: "more", agent: nil, label: "\(hidden.count) more",
+                percent: format.percent(total > 0 ? hidden.reduce(0) { $0 + amount($1) } / total : 0),
+                value: metric == .tokens
+                    ? format.tokens(hidden.reduce(0) { $0 + ($1.tokens ?? 0) })
+                    : creditsText(hidden.reduce(0) { $0 + ($1.credits ?? 0) })
+            )
+            : nil
+        return (title, rows, collapsedCount, more)
+    }
+
+    /// The row id for a piece of work, stable across the time and metric sections.
+    private func workID(_ tag: WorkTag) -> String { "\(tag.project)/\(tag.concern)" }
+
+    /// The row label for a piece of work. Work outside git, or in the home folder, has one name,
+    /// said once; otherwise the short project and the concern.
+    private func workLabel(_ tag: WorkTag) -> String {
+        tag.project == tag.concern ? tag.project : "\(tag.projectShortName) · \(tag.concern)"
     }
 }

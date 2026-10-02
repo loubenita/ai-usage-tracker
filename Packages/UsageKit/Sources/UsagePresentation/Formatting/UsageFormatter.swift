@@ -85,6 +85,24 @@ public struct UsageFormatter: Sendable {
         return grouped(value)
     }
 
+    /// What a Kiro credit costs as pay-as-you-go overage: $0.04 per credit
+    /// (kiro.dev/blog/new-pricing-plans-and-auto). Used only to show credits in dollars; the
+    /// real bill depends on the plan's included credits, so this is an estimate.
+    public static let usdPerCredit = Decimal(string: "0.04")!
+
+    /// The dollar value of a credit count at the overage rate, as a Decimal: 11 credits is 0.44.
+    /// Lets callers show cost in its own column, apart from the credit count.
+    public func creditsUSD(_ value: Double) -> Decimal {
+        Decimal(value) * Self.usdPerCredit
+    }
+
+    /// Credits with the dollar estimate beside them: "4.2 CR · ~$0.17", "171 CR · ~$6.84".
+    /// Kiro bills in credits and reports no dollar figure, so the cost is derived from the
+    /// credit count and marked "~" to show it is an estimate at the overage rate.
+    public func creditsWithUSD(_ value: Double) -> String {
+        "\(credits(value)) CR · ~\(usd(creditsUSD(value)))"
+    }
+
     /// One decimal place, dropping ".0": 1.24 is "1.2", 2.96 is "3".
     private func oneDecimal(_ value: Double, unit: String) -> String {
         let tenths = (value * 10).rounded(.toNearestOrAwayFromZero) / 10

@@ -79,6 +79,9 @@ public struct AgentLimits: Sendable, Hashable {
     /// Windows and plans whose last reading is of a period that has ended (see `ResetWindow`).
     /// They are not limits in use: `hasWindows`, `standings` and every forecast leave them out.
     public let resetWindows: [ResetWindow]
+    /// Local, reset-anchored credit buckets summed from this Mac's turns, labelled "on this Mac"
+    /// (see `CreditBuckets`). Nil for an agent that does not bill in credits.
+    public let localCreditBuckets: CreditBuckets?
 
     public init(
         fiveHour: LimitReport?,
@@ -90,10 +93,12 @@ public struct AgentLimits: Sendable, Hashable {
         plan: PlanUsage? = nil,
         creditsUsedToday: Double? = nil,
         creditsPerDayLeft: Double? = nil,
-        resetWindows: [ResetWindow] = []
+        resetWindows: [ResetWindow] = [],
+        localCreditBuckets: CreditBuckets? = nil
     ) {
         self.resetWindows = resetWindows
         self.creditsPerDayLeft = creditsPerDayLeft
+        self.localCreditBuckets = localCreditBuckets
         self.fiveHour = fiveHour
         self.weekly = weekly
         self.monthly = monthly
@@ -114,7 +119,8 @@ public struct AgentLimits: Sendable, Hashable {
     /// Whether the agent reported any limit window as a percentage.
     public var hasWindows: Bool { fiveHour != nil || weekly != nil || monthly != nil }
     public var isEmpty: Bool {
-        !hasWindows && creditsUsedThisMonth == nil && plan == nil && creditsUsedToday == nil && resetWindows.isEmpty
+        !hasWindows && creditsUsedThisMonth == nil && plan == nil && creditsUsedToday == nil
+            && resetWindows.isEmpty && localCreditBuckets == nil
     }
 }
 
@@ -212,7 +218,8 @@ public struct GenerateUsageReport: Sendable {
         let accounts = accountLimits(records, now: now)
         var agentLimits = limitsByAgent(
             records.limits.filter { $0.agent != .claudeCode || $0.accountID == nil },
-            credits: records.creditsThisMonth, plans: records.plans, creditsToday: creditsToday, now: now
+            credits: records.creditsThisMonth, plans: records.plans, creditsToday: creditsToday,
+            buckets: records.localCreditBuckets, now: now
         )
         let claudeAccounts = accounts.filter { $0.agent == .claudeCode && $0.limits.hasWindows }
         if let tightest = claudeAccounts.max(by: {
@@ -314,7 +321,7 @@ public struct GenerateUsageReport: Sendable {
             let name = group.compactMap(\.accountName).last
                 ?? sessions.first(where: { $0.0 == id })?.1 ?? snapshots[id]?.name ?? id
             let limits = limitsByAgent(
-                group, credits: [:], plans: [:], creditsToday: [:], now: now
+                group, credits: [:], plans: [:], creditsToday: [:], buckets: [:], now: now
             )[agent] ?? .none
             return AccountLimitReport(
                 id: id, name: name, agent: agent, limits: limits, snapshot: snapshots[id]
@@ -327,7 +334,7 @@ public struct GenerateUsageReport: Sendable {
     /// Kiro's credits and plan join its limits: they are what Kiro counts its plan in.
     private func limitsByAgent(
         _ readings: [LimitReading], credits: [Agent: Double], plans: [Agent: PlanUsage],
-        creditsToday: [Agent: Double], now: Date
+        creditsToday: [Agent: Double], buckets: [Agent: CreditBuckets], now: Date
     ) -> [Agent: AgentLimits] {
         let current = readings.map { reading in
             LimitReading(
@@ -341,6 +348,7 @@ public struct GenerateUsageReport: Sendable {
         let allByAgent = Dictionary(grouping: readings, by: \.agent)
         let today = calendar.startOfDay(for: now)
         let agents = Set(byAgent.keys).union(credits.keys).union(plans.keys).union(creditsToday.keys)
+            .union(buckets.keys)
         return agents.reduce(into: [:]) { result, agent in
             let readings = byAgent[agent] ?? []
             let weekly = LimitForecast.report(.weekly, from: readings, calendar: calendar)
@@ -362,7 +370,8 @@ public struct GenerateUsageReport: Sendable {
                 // A window or plan that has reset says nothing about the one running now, but its
                 // last reading stays as a reset window, which no total, forecast or warning counts.
                 resetWindows: ResetWindow.lastSeen(in: all, now: now)
-                    + [ResetWindow.lastSeen(plan: plans[agent], now: now)].compactMap { $0 }
+                    + [ResetWindow.lastSeen(plan: plans[agent], now: now)].compactMap { $0 },
+                localCreditBuckets: buckets[agent]
             )
             if !limits.isEmpty { result[agent] = limits }
         }

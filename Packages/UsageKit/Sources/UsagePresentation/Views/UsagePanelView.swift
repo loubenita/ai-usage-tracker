@@ -293,15 +293,40 @@ private struct AgentUsageView: View {
             if let chart = model.chart {
                 ChartView(model: chart, agent: model.agent, onSelect: onSelectBucket)
             }
+            if let localCredits = model.localCredits {
+                Text(localCredits.caption)
+                    .font(TypeScale.captionFont)
+                    .foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .staticDigits()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if !model.models.isEmpty || !model.whereRows.isEmpty {
                 columns.sectionDivider()
+            }
+            if let title = model.whereMetricTitle, !model.whereMetric.isEmpty {
+                MetricWhereList(
+                    title: title,
+                    rows: model.whereMetric,
+                    collapsedCount: model.whereMetricCollapsedCount,
+                    more: model.whereMetricMore,
+                    showAll: $showAllMetric
+                )
+                .sectionDivider()
             }
         }
     }
 
-    /// The models column beside the time column: wider when each model also shows its credits.
+    /// Each section starts collapsed, showing its top rows and a tappable "+N more"; tapping
+    /// reveals every row with a "Show less" affordance.
+    @State private var showAllTime = false
+    @State private var showAllMetric = false
+
+    /// The models column beside the time column: wider when each model also shows its credits
+    /// (and the dollar estimate beside them).
     private var modelsWidth: CGFloat {
-        model.models.contains { $0.credits != nil } ? 152 : 112
+        model.models.contains { $0.credits != nil } ? 210 : 112
     }
 
     /// Models on the left and where the time went on the right; either alone takes the width.
@@ -315,7 +340,7 @@ private struct AgentUsageView: View {
                             Text(row.name).foregroundStyle(Theme.name).lineLimit(1)
                             Spacer(minLength: 4)
                             if let credits = row.credits {
-                                Text(credits).foregroundStyle(Theme.secondary)
+                                Text(credits).foregroundStyle(Theme.secondary).lineLimit(1)
                             }
                             Text(row.percent).foregroundStyle(Theme.primary)
                         }
@@ -327,15 +352,125 @@ private struct AgentUsageView: View {
                 .frame(maxWidth: model.whereRows.isEmpty ? .infinity : nil, alignment: .leading)
             }
             if !model.whereRows.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("WHERE THE TIME WENT").capsLabel().lineLimit(1)
-                    ForEach(model.whereRows) { row in
-                        TimeRow(model: row, showsPercent: model.models.isEmpty)
-                    }
-                }
+                TimeWhereList(
+                    title: "WHERE THE TIME WENT",
+                    rows: model.whereRows,
+                    collapsedCount: model.whereCollapsedCount,
+                    more: model.whereMore,
+                    showsPercent: model.models.isEmpty,
+                    showAll: $showAllTime
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+}
+
+/// A "+N more" / "Show less" row that toggles a section between its top few rows and all of
+/// them. It carries a clear label for VoiceOver and is one tap target.
+private struct ExpandToggle: View {
+    let expanded: Bool
+    /// "3 more" when collapsed; the control adds "Show" / "Show less" context in its label.
+    let moreLabel: String
+    let onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Color.clear.frame(width: 6, height: 6)
+            Text(expanded ? "Show less" : "+\(moreLabel)")
+                .font(TypeScale.secondaryFont)
+                .foregroundStyle(Theme.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+        }
+        .contentShape(Rectangle())
+        .clickable(expanded ? "Show fewer rows" : "Show all rows, \(moreLabel)", action: onToggle)
+    }
+}
+
+/// Where the time went: the top `collapsedCount` rows and a tappable "+N more" when collapsed,
+/// or every row with "Show less" when expanded. The "+N more" row keeps its aggregate share and
+/// time as the collapsed summary.
+private struct TimeWhereList: View {
+    let title: String
+    let rows: [TimeRowModel]
+    let collapsedCount: Int
+    let more: TimeRowModel?
+    let showsPercent: Bool
+    @Binding var showAll: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).capsLabel().lineLimit(1)
+            if showAll || more == nil {
+                ForEach(rows) { TimeRow(model: $0, showsPercent: showsPercent) }
+                if let more, showAll {
+                    ExpandToggle(expanded: true, moreLabel: more.label) { showAll = false }
+                }
+            } else {
+                ForEach(rows.prefix(collapsedCount)) { TimeRow(model: $0, showsPercent: showsPercent) }
+                if let more {
+                    ExpandToggle(expanded: false, moreLabel: more.label) { showAll = true }
+                }
+            }
+        }
+    }
+}
+
+/// Where the tokens or credits went, with the same expand/collapse behaviour as the time list.
+/// Each row shows the work, its share of the metric, and the metric value.
+private struct MetricWhereList: View {
+    let title: String
+    let rows: [WorkMetricRowModel]
+    let collapsedCount: Int
+    let more: WorkMetricRowModel?
+    @Binding var showAll: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).capsLabel().lineLimit(1)
+            if showAll || more == nil {
+                ForEach(rows) { MetricRow(model: $0) }
+                if let more, showAll {
+                    ExpandToggle(expanded: true, moreLabel: more.label) { showAll = false }
+                }
+            } else {
+                ForEach(rows.prefix(collapsedCount)) { MetricRow(model: $0) }
+                if let more {
+                    ExpandToggle(expanded: false, moreLabel: more.label) { showAll = true }
+                }
+            }
+        }
+    }
+}
+
+/// "● MS · Video generation  50%  280k": a work row for the tokens/credits section.
+private struct MetricRow: View {
+    let model: WorkMetricRowModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Group {
+                if let agent = model.agent { AgentDot(agent: agent) } else { Color.clear }
+            }
+            .frame(width: 6, height: 6)
+            Text(model.label)
+                .font(TypeScale.secondaryFont)
+                .foregroundStyle(Theme.name)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(model.percent ?? "").font(TypeScale.secondaryFont).foregroundStyle(Theme.primary)
+                .frame(width: 32, alignment: .trailing)
+            Text(model.value)
+                .font(TypeScale.secondaryFont)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize()
+                .frame(minWidth: 46, alignment: .trailing)
+        }
+        .staticDigits()
     }
 }
 

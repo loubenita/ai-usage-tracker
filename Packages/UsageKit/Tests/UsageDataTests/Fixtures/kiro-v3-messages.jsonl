@@ -1,0 +1,7 @@
+{"id":"exec-1-assistant","timestamp":"2026-10-01T10:24:00.000Z","payload":{"type":"assistant","executionId":"exec-1","reasoningModelId":"qdev::auto","content":[{"type":"text","text":"Working on it."}]}}
+{"id":"exec-1-usage","timestamp":"2026-10-01T10:24:11.946Z","payload":{"type":"usage_summary","promptTurnSummaries":[{"unit":"credit","usage":1.06,"usedTools":["read_file","execute_bash"]}],"elapsedTime":38911,"status":"success","executionId":"exec-1","requestIds":["r1","r2"]}}
+{"id":"exec-2-assistant","timestamp":"2026-10-01T10:30:00.000Z","payload":{"type":"assistant","executionId":"exec-2","reasoningModelId":"qdev::claude-opus-4.8","content":[{"type":"text","text":"More."}]}}
+{"id":"exec-2-usage","timestamp":"2026-10-01T10:30:40.000Z","payload":{"type":"usage_summary","promptTurnSummaries":[{"unit":"credit","usage":0.25,"usedTools":["fs_read"]},{"unit":"credit","usage":0.5,"usedTools":["execute_bash","fs_write"]}],"elapsedTime":12000,"status":"success","executionId":"exec-2","requestIds":["r3"]}}
+{"id":"exec-3-usage","timestamp":"2026-10-01T10:40:00.000Z","payload":{"type":"usage_summary","promptTurnSummaries":[{"unit":"credit","usage":9.99,"usedTools":["read_file"]}],"elapsedTime":5000,"status":"error","executionId":"exec-3","requestIds":["r4"]}}
+not valid json at all
+{"id":"partial","timestamp":"2026-10-01T10:41:00.000Z","payload":{"type":"usage_summary"

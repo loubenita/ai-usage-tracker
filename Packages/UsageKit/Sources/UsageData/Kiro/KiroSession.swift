@@ -16,6 +16,13 @@ import UsageDomain
 /// - Each entry also has token counts, but current builds write every one of them as 0. A
 ///   request with no counts reports its tokens as unknown, not as zero. The credits in
 ///   `metering_usage` are what Kiro really reports.
+/// - `session_created_reason` says why the session was opened; "subagent" marks a session a
+///   parent agent started, as opposed to one a person started.
+///
+/// The conversation text lives beside the metadata in `<session id>.jsonl`, a transcript whose
+/// non-empty lines are each `{"version":…, "kind":…, "data":…}`. Current builds write every
+/// token count as 0, so a rough token figure is estimated from that text instead (see
+/// `estimatedTokens(fromTranscript:)`); it is kept clearly apart from the precise counts.
 struct KiroSession: Sendable, Hashable {
     struct Request: Sendable, Hashable {
         let timestamp: Date?
@@ -45,8 +52,25 @@ struct KiroSession: Sendable, Hashable {
     let model: String?
     let contextWindow: Int?
     let requests: [Request]
+    /// When the session was first opened, from the file's `created_at`. A V2 CLI build may write
+    /// a new file per resume, so this can be per-file rather than the very first start, but it is
+    /// still a truer session start than the `kiro-cli` process uptime. Nil when the file omits it.
+    let createdAt: Date?
+    /// Why the session was opened: true when `session_created_reason` is "subagent", so a
+    /// parent agent started it rather than a person.
+    let isSubagent: Bool
+    /// A rough token count estimated from the transcript text (see `estimatedTokens`), input and
+    /// output only. Nil when there is no transcript or it holds no message text. It is never a
+    /// precise count and is never summed into any exact token total.
+    let estimatedTokens: TokenUsage?
 
     init?(json data: Data, fallbackID: String) {
+        self.init(json: data, transcript: nil, fallbackID: fallbackID)
+    }
+
+    /// Reads the session metadata, and when `transcript` is the text of the sibling `.jsonl`,
+    /// the estimated tokens from it. The transcript-free initializer above keeps estimates nil.
+    init?(json data: Data, transcript: String?, fallbackID: String) {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let state = object["session_state"] as? [String: Any]
         let modelInfo = (state?["rts_model_state"] as? [String: Any])?["model_info"] as? [String: Any]
@@ -57,6 +81,13 @@ struct KiroSession: Sendable, Hashable {
         // Kiro can leave the window out; tokscale then uses 200K, the window of Kiro's Auto agent.
         contextWindow = modelInfo?["context_window_tokens"] as? Int ?? Self.defaultContextWindow
         requests = (metadata?["user_turn_metadatas"] as? [[String: Any]] ?? []).map(Self.request)
+        // Kiro writes `session_created_reason: "subagent"` on every CLI session (seen on all of
+        // them, including the app's own /usage probe), so it does not actually mark a sub-agent
+        // and cannot be trusted. There is no reliable sub-agent signal in Kiro's files, so no
+        // session is treated as one.
+        isSubagent = false
+        createdAt = Self.date(object["created_at"])
+        estimatedTokens = transcript.flatMap(Self.estimatedTokens(fromTranscript:))
     }
 
     private static func request(_ turn: [String: Any]) -> Request {
@@ -82,6 +113,62 @@ struct KiroSession: Sendable, Hashable {
             promptLength: count("user_prompt_length")
         )
     }
+
+    /// Roughly how many input and output tokens the session's text came to, estimated from the
+    /// sibling `<session id>.jsonl` transcript. Current Kiro builds write every precise count as
+    /// 0, so this gives a figure where there would otherwise be none. It is deliberately a rough
+    /// estimate: about `charactersPerToken` characters a token, with no cache tokens, and it is
+    /// never summed into an exact total.
+    ///
+    /// Each non-empty line is `{"version":…, "kind":…, "data":…}`. Rather than cherry-picking
+    /// the clean "text" fields, which captured only a fraction of a real session's context,
+    /// this counts the FULL character length of each relevant line, including the structured
+    /// JSON the model actually processes: tool-call argument trees, tool-result metadata and
+    /// operation specs. The line's top-level `kind` decides which side it counts towards:
+    ///
+    /// - Input: "Prompt" lines (the person's text) and "ToolResults" lines (file reads, command
+    ///   output and search results the model reads back). Tool results are the bulk of a real
+    ///   session's bytes, so leaving them out made estimates far too low.
+    /// - Output: "AssistantMessage" lines (Kiro's reply, its tool calls and its thinking).
+    /// - Every other kind (version/metadata and the like) is ignored.
+    ///
+    /// The magnitude of a matched line is the raw line string's `.count`: the kind is read by
+    /// parsing the line as JSON, but the measure is the whole line's length, which is simple and
+    /// deterministic. Lines that are empty, that do not parse as JSON, or that carry no top-level
+    /// `kind` are skipped rather than crashing. Nil when no relevant line is found.
+    static func estimatedTokens(fromTranscript text: String) -> TokenUsage? {
+        var inputChars = 0
+        var outputChars = 0
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard
+                !line.isEmpty,
+                let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                let kind = object["kind"] as? String
+            else { continue }
+            switch kind {
+            case "Prompt", "ToolResults":
+                inputChars += line.count
+            case "AssistantMessage":
+                outputChars += line.count
+            default:
+                continue
+            }
+        }
+        guard inputChars > 0 || outputChars > 0 else { return nil }
+        func tokens(_ characters: Int) -> Int? {
+            characters > 0 ? Int((Double(characters) / charactersPerToken).rounded()) : nil
+        }
+        return TokenUsage(input: tokens(inputChars), output: tokens(outputChars), cacheRead: nil, cacheWrite: nil)
+    }
+
+    /// A rough average of characters per token for the transcript estimate, calibrated against
+    /// Kiro's own reported `context_usage_percentage` over many real sessions. Because the
+    /// transcript's structured JSON (tool-call arguments and tool-result metadata) is counted
+    /// along with the plain text, since the model processes all of it, full relevant line bytes
+    /// per real context token come out near 2.5. It stays a linear divisor: this is an
+    /// informational per-session estimate, not a precise count.
+    static let charactersPerToken = 2.5
 
     /// A length of time written as `{"secs": 553, "nanos": 519031792}`; nil without the seconds.
     private static func duration(_ value: Any?) -> TimeInterval? {

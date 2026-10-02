@@ -70,6 +70,14 @@ struct UsageFormatterTests {
         #expect(format.credits(137.6) == "138")
     }
 
+    @Test func creditsWithUSD() {
+        // Kiro bills in credits; the dollar figure is derived at $0.04 per credit and marked "~".
+        #expect(format.creditsWithUSD(4.2) == "4.2 CR · ~$0.17")
+        #expect(format.creditsWithUSD(0.75) == "0.8 CR · ~$0.03")
+        #expect(format.creditsWithUSD(171) == "171 CR · ~$6.84")
+        #expect(format.creditsWithUSD(72.5) == "72.5 CR · ~$2.90")
+    }
+
     @Test func tokensInARing() {
         // Never more than three characters and a unit, and no decimals above ten.
         #expect(format.ringTokens(940) == "940")

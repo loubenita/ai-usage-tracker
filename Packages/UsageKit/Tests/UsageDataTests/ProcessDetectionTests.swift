@@ -400,6 +400,78 @@ struct ProcessSessionRepositoryTests {
         #expect(records.sessionEvents.allSatisfy { $0.agent == .kiro })
     }
 
+    // MARK: - Session start from the session file
+
+    @Test func theSessionStartHelperPrefersAGoodFileTimeAndGuardsBadOnes() {
+        let now = Fixture.date("2026-10-02T12:00:00Z")
+        let processStart = Fixture.date("2026-10-02T11:15:00Z")
+        let realStart = Fixture.date("2026-10-02T07:51:00Z")
+        // A file time hours before the process start, but not in the future or absurdly old, is used.
+        #expect(ProcessSessionRepository.sessionStart(fileStart: realStart, processStart: processStart, now: now) == realStart)
+        // No file time: the process start stands.
+        #expect(ProcessSessionRepository.sessionStart(fileStart: nil, processStart: processStart, now: now) == processStart)
+        // A file time in the future is not trusted.
+        let future = now.addingTimeInterval(60 * 60)
+        #expect(ProcessSessionRepository.sessionStart(fileStart: future, processStart: processStart, now: now) == processStart)
+        // A file time older than the sane bound is not trusted.
+        let ancient = now.addingTimeInterval(-ProcessSessionRepository.maxSessionAge - 1)
+        #expect(ProcessSessionRepository.sessionStart(fileStart: ancient, processStart: processStart, now: now) == processStart)
+    }
+
+    /// A Kiro CLI session open for hours, whose `kiro-cli` process re-exec'd recently (so `ps`
+    /// shows a start only minutes back). The session file's `created_at` is the true start, hours
+    /// before, and the live `start` event must take it, so the strip's active time counts from
+    /// the real start, not from the process restart.
+    @Test func aKiroSessionStartsFromItsFileNotTheRestartedProcess() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.path + "/shop"
+        let sessions = root.appendingPathComponent(".kiro/sessions/cli")
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        // Times are set relative to the real clock the repository reads as `now`, so the guards
+        // (not in the future, not absurdly old) pass whenever the test runs. The true start is
+        // five hours ago; the process is a recent re-exec. The `ps` table is written in the
+        // local zone so the parsed process start matches the intended minutes-ago time.
+        let now = Date()
+        let realStart = now.addingTimeInterval(-5 * 60 * 60)
+        let processStart = now.addingTimeInterval(-45 * 60)
+        let psFormatter = DateFormatter()
+        psFormatter.locale = Locale(identifier: "en_US_POSIX")
+        psFormatter.timeZone = Fixture.london
+        psFormatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+        // created_at is written in epoch seconds, which KiroSession.date reads the same as ISO text.
+        try """
+        {"session_id":"s-morning","cwd":"\(folder)","created_at":\(Int(realStart.timeIntervalSince1970))}
+        """.write(to: sessions.appendingPathComponent("s-morning.json"), atomically: true, encoding: .utf8)
+        let table = """
+          PID  PPID TTY      STARTED                      COMMAND
+            1     0 ??       Mon Aug 24 20:16:04 2026     /sbin/launchd
+          800   700 ttys003  \(psFormatter.string(from: processStart))     kiro-cli chat
+        """
+        let source = FolderSource(text: table, folders: [800: folder])
+        let repository = ProcessSessionRepository(
+            source: source, homeDirectory: root.path, claudeDirectory: "/nonexistent", timeZone: Fixture.london
+        )
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        let start = try #require(records.sessionEvents.first { $0.sessionID == "kiro-800" && $0.kind == .start })
+        // The start takes the file time (five hours back), not the recent process start.
+        #expect(abs(start.timestamp.timeIntervalSince(realStart)) < 1)
+        #expect(start.timestamp.timeIntervalSince(processStart) < -60 * 60)
+    }
+
+    /// Other agents expose no session start, so their live start keeps the process start. Claude
+    /// Code's start on the recorded list still reads from `ps`, unchanged by Fix B.
+    @Test func otherAgentsKeepTheProcessStart() async throws {
+        let repository = ProcessSessionRepository(
+            source: RecordedSource(text: try Fixture.text("ps-2026-09-21.txt")),
+            claudeDirectory: "/nonexistent", timeZone: Fixture.london
+        )
+        let records = try await repository.sessionRecords(from: .distantPast, to: .distantFuture)
+        let mine = try #require(records.sessionEvents.first { $0.sessionID == "claude-code-35056" && $0.kind == .start })
+        #expect(mine.timestamp == Fixture.date("2026-09-21T21:00:49Z"))
+    }
+
     @Test func servesOneStartRecordPerSession() async throws {
         let repository = ProcessSessionRepository(
             source: RecordedSource(text: try Fixture.text("ps-2026-09-21.txt")),

@@ -48,10 +48,12 @@ final class UsageHistory: Sendable {
     private let homeDirectory: String
     private let codex: CodexFiles
     private let kiro: KiroFiles
+    private let kiroV3: KiroV3Files
     private let files = FileAccess()
     private let mainTranscripts = TranscriptStore()
     private let subagentTranscripts = TranscriptStore(includeSidechains: true)
     private let rollouts = IncrementalFileStore { CodexRollout() }
+    private let kiroV3Transcripts = IncrementalFileStore { KiroV3Transcript() }
     private let minimumWorkingTime: TimeInterval
     /// Where the history is saved between launches; nil keeps it in memory only.
     private let cachePath: String?
@@ -63,6 +65,7 @@ final class UsageHistory: Sendable {
         claudeDirectory: String,
         codex: CodexFiles,
         kiro: KiroFiles,
+        kiroV3: KiroV3Files,
         discoversClaudeProfiles: Bool = true,
         minimumWorkingTime: TimeInterval = UsualRate.minimumWorkingTime,
         cachePath: String? = nil
@@ -72,6 +75,7 @@ final class UsageHistory: Sendable {
         self.discoversClaudeProfiles = discoversClaudeProfiles
         self.codex = codex
         self.kiro = kiro
+        self.kiroV3 = kiroV3
         self.minimumWorkingTime = minimumWorkingTime
         self.cachePath = cachePath
         let cache = cachePath.flatMap(HistoryCache.load)
@@ -80,6 +84,7 @@ final class UsageHistory: Sendable {
             mainTranscripts.restore(cache.mainTranscripts)
             subagentTranscripts.restore(cache.subagentTranscripts)
             rollouts.restore(cache.rollouts)
+            kiroV3Transcripts.restore(cache.kiroV3Transcripts)
         }
     }
 
@@ -191,6 +196,26 @@ final class UsageHistory: Sendable {
             if let credits = session.credits(since: monthStart) { kiroCredits = (kiroCredits ?? 0) + credits }
         }
 
+        // Kiro V3 (ACP): each session in its own folder, read incrementally like a transcript.
+        // Its credits join the V2 CLI credits above in the same totals; the ids are disjoint, so
+        // the two sources are a clean union with no double counting. The app's own `/usage`
+        // probe folder is skipped, as with the V2 sessions.
+        let v3Sessions = kiroV3.sessions(changedSince: since)
+            .filter { $0.folder.map { !$0.hasSuffix("/" + KiroPlanReader.folderName) } ?? true }
+        kiroV3Transcripts.keepOnly(Set(v3Sessions.map(\.transcriptPath)))
+        for session in v3Sessions {
+            guard let transcript = kiroV3Transcripts.content(at: session.transcriptPath) else { continue }
+            let work = namer.work(folder: session.folder, branch: nil)
+            add(
+                transcript.turns(
+                    sessUUID: session.sessUUID, sessionID: "kiro-\(session.sessUUID)",
+                    work: work, sessionModel: session.model
+                ),
+                agent: .kiro, isMain: true
+            )
+            if let credits = transcript.credits(since: monthStart) { kiroCredits = (kiroCredits ?? 0) + credits }
+        }
+
         if let log = files.data(ClaudeLimitsLog.path(homeDirectory: homeDirectory)) {
             limits += ClaudeLimitsLog.readings(in: log, since: since)
         }
@@ -213,9 +238,11 @@ final class UsageHistory: Sendable {
     private func saveCache() {
         guard let cachePath else { return }
         let offset = mainTranscripts.totalOffset + subagentTranscripts.totalOffset + rollouts.totalOffset
+            + kiroV3Transcripts.totalOffset
         guard state.withLock({ $0.savedOffset }) != offset else { return }
         let cache = HistoryCache(
-            mainTranscripts: mainTranscripts.saved, subagentTranscripts: subagentTranscripts.saved, rollouts: rollouts.saved
+            mainTranscripts: mainTranscripts.saved, subagentTranscripts: subagentTranscripts.saved,
+            rollouts: rollouts.saved, kiroV3Transcripts: kiroV3Transcripts.saved
         )
         if (try? cache.save(to: cachePath)) != nil {
             state.withLock { $0.savedOffset = offset }

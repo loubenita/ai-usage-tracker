@@ -29,13 +29,35 @@ public struct AgentPeriodUsage: Sendable, Hashable {
     public let context: ContextUsage?
 }
 
-/// One piece of work's share of the period's working time.
+/// One piece of work's share of the period's working time, with the tokens and credits that
+/// work was billed where the agents on it report them. `tokens` is nil when none of its turns
+/// reported a token count (Kiro's Auto), and `credits` is nil when none billed credits.
 public struct WorkTime: Sendable, Hashable {
     public let tag: WorkTag
     public let workingTime: TimeInterval
     public let share: Double
     /// The agent that spent the most time on it, for the dot beside it.
     public let agent: Agent
+    /// The tokens this work was billed, nil when none of its turns reported a count.
+    public let tokens: Int?
+    /// The credits this work was billed, nil when none of its turns reported credits (Kiro).
+    public let credits: Double?
+
+    public init(
+        tag: WorkTag,
+        workingTime: TimeInterval,
+        share: Double,
+        agent: Agent,
+        tokens: Int? = nil,
+        credits: Double? = nil
+    ) {
+        self.tag = tag
+        self.workingTime = workingTime
+        self.share = share
+        self.agent = agent
+        self.tokens = tokens
+        self.credits = credits
+    }
 }
 
 /// One model's share of the period: of its tokens; when no model reports tokens, of its credits
@@ -49,11 +71,20 @@ public struct ModelShare: Sendable, Hashable {
     public let share: Double
 }
 
-/// One bar of the overview's chart, a day on Week and a week on Month: its tokens and time.
+/// One bar of the overview's chart, a day on Week and a week on Month: its tokens, time and
+/// the credits it was billed (Kiro). Credits default to 0 for agents that bill in none.
 public struct TokenBucket: Sendable, Hashable {
     public let start: Date
     public let tokens: Int
     public let workingTime: TimeInterval
+    public let credits: Double
+
+    public init(start: Date, tokens: Int, workingTime: TimeInterval, credits: Double = 0) {
+        self.start = start
+        self.tokens = tokens
+        self.workingTime = workingTime
+        self.credits = credits
+    }
 }
 
 /// The detail behind one visible Week or Month chart bar. It deliberately carries the same
@@ -160,7 +191,8 @@ public enum PeriodUsageBuilder {
             TokenBucket(
                 start: bucket.start,
                 tokens: bucket.turns.reduce(0) { $0 + ($1.tokens?.total ?? 0) },
-                workingTime: workingTime(bucket.turns)
+                workingTime: workingTime(bucket.turns),
+                credits: Breakdown.totalCredits(bucket.turns) ?? 0
             )
         }
         let bucketUsage = bucketRanges.map { bucket in
@@ -215,9 +247,20 @@ public enum PeriodUsageBuilder {
 
     private static func workTimes(_ turns: [Turn], total: TimeInterval) -> [WorkTime] {
         Dictionary(grouping: turns, by: \.work.tag)
-            .map { tag, turns in (tag: tag, time: workingTime(turns), agent: mainAgent(turns)) }
+            .map { tag, turns in
+                (
+                    tag: tag, time: workingTime(turns), agent: mainAgent(turns),
+                    tokens: Breakdown.totalTokens(turns)?.total.flatMap { $0 > 0 ? $0 : nil },
+                    credits: Breakdown.totalCredits(turns)
+                )
+            }
             .filter { $0.time > 0 }
-            .map { WorkTime(tag: $0.tag, workingTime: $0.time, share: total > 0 ? $0.time / total : 0, agent: $0.agent) }
+            .map {
+                WorkTime(
+                    tag: $0.tag, workingTime: $0.time, share: total > 0 ? $0.time / total : 0, agent: $0.agent,
+                    tokens: $0.tokens, credits: $0.credits
+                )
+            }
             .sorted { ($0.workingTime, $0.tag.concern) > ($1.workingTime, $1.tag.concern) }
     }
 

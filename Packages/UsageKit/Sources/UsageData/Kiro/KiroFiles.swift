@@ -22,7 +22,14 @@ final class KiroFiles: Sendable {
                 return (path, modified, cached.session)
             }
             let id = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-            guard let data = files.data(path), let session = KiroSession(json: data, fallbackID: id) else { return nil }
+            // The conversation text sits beside the metadata, in `<id>.jsonl`. It is read only
+            // when the metadata file changed, keyed on the same modified date through the cache.
+            let transcriptPath = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("jsonl").path
+            let transcript = files.data(transcriptPath).flatMap { String(data: $0, encoding: .utf8) }
+            guard
+                let data = files.data(path),
+                let session = KiroSession(json: data, transcript: transcript, fallbackID: id)
+            else { return nil }
             cache.withLock { $0[path] = (modified, session) }
             return (path, modified, session)
         }

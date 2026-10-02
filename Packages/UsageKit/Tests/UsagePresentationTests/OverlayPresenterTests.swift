@@ -116,7 +116,8 @@ struct OverlayPresenterTests {
         #expect(panel.status == StatusModel(kind: .waiting, text: "Ready for input · 4m", place: "Warp"))
         #expect(panel.stats == [
             StatModel(label: "Total spent", value: "$1.10"), StatModel(label: "Total tokens", value: "280k"),
-            StatModel(label: "Active", value: "23m"), StatModel(label: "Turns", value: "18"),
+            StatModel(label: "Open", value: "27m"), StatModel(label: "Worked", value: "23m"),
+            StatModel(label: "Turns", value: "18"),
         ])
         #expect(panel.context?.title == "Context 34%")
         #expect(panel.context?.detail == "68k of 200k · full ~15:20")
@@ -175,6 +176,44 @@ struct OverlayPresenterTests {
         let records = UsageRecords(turns: turns, limits: [], sessionEvents: events, capturedAt: start)
         let settings = UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20)
         return GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 5400)
+    }
+
+    @Test func aKiroSessionsTokenEstimateIsShownFaintly() throws {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        let tag = WorkTag(project: "ai-usage-tracker", concern: "main")
+        // A Kiro Auto session: no precise tokens, but an estimate from the transcript text.
+        let turn = Turn(
+            id: "t", timestamp: start + 60, agent: .kiro, sessionID: "claude-code-3857",
+            model: "auto", work: Work(tag: tag), tokens: nil, cost: Cost(usd: nil), context: nil, credits: 0.5
+        )
+        let snapshot = SessionSnapshot(
+            estimatedTokens: TokenUsage(input: 120_000, output: 6_000)
+        )
+        let report = detected(turns: [turn], snapshot: snapshot)
+        let panel = try #require(presenter.panel(report, sessionID: "claude-code-3857"))
+        // The estimate shows as a faint, "~"-marked stat labelled clearly as an estimate,
+        // beside no precise "Total tokens" stat.
+        #expect(panel.stats.contains(StatModel(label: "Tokens (est.)", value: "~126k")))
+        #expect(!panel.stats.contains { $0.label == "Total tokens" })
+        #expect(panel.tokensEstimateNote?.contains("Estimated from the transcript text") == true)
+        #expect(panel.tokensEstimateNote?.contains("Cache") == true)
+    }
+
+    @Test func aPreciseTokenCountSuppressesTheEstimate() throws {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        let tag = WorkTag(project: "ai-usage-tracker", concern: "main")
+        let turn = Turn(
+            id: "t", timestamp: start + 60, agent: .claudeCode, sessionID: "claude-code-3857",
+            model: "claude-opus-5", work: Work(tag: tag), tokens: TokenUsage(input: 50_000, output: 10_000),
+            cost: Cost(usd: 1), context: nil
+        )
+        // Even if an estimate is present, it is never shown beside a real count.
+        let snapshot = SessionSnapshot(estimatedTokens: TokenUsage(input: 100_000, output: 5_000))
+        let report = detected(turns: [turn], snapshot: snapshot)
+        let panel = try #require(presenter.panel(report, sessionID: "claude-code-3857"))
+        #expect(panel.stats.contains { $0.label == "Total tokens" })
+        #expect(!panel.stats.contains { $0.label == "Tokens (est.)" })
+        #expect(panel.tokensEstimateNote == nil)
     }
 
     @Test func sessionsThatReadTheSameInTheStripAreToldApartByWhenTheyStarted() throws {
@@ -258,7 +297,10 @@ struct OverlayPresenterTests {
         // On main, the branch says nothing about the task, so the folder names it.
         #expect(panel.title == "ai-usage-tracker")
         // No replies yet: no cost, tokens or turns; no context, token mix, pace or model.
-        #expect(panel.stats == [StatModel(label: "Active", value: "1h 30m")])
+        // Open and worked are both the full span since start, since nothing marked it idle.
+        #expect(panel.stats == [
+            StatModel(label: "Open", value: "1h 30m"), StatModel(label: "Worked", value: "1h 30m"),
+        ])
         #expect(panel.context == nil)
         #expect(panel.tokenMix.isEmpty)
         #expect(panel.tokenMixNote == nil)
@@ -312,7 +354,8 @@ struct OverlayPresenterTests {
         let settings = UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20)
         let report = GenerateUsageReport(settings: settings, calendar: calendar)(records, now: start + 600)
         let panel = try #require(presenter.panel(report, sessionID: "k"))
-        #expect(panel.stats.first == StatModel(label: "Credits", value: "0.8"))
+        #expect(panel.stats.first == StatModel(label: "Credits", value: "0.8 CR"))
+        #expect(panel.stats.contains(StatModel(label: "Cost", value: "~$0.03")))
         #expect(!panel.stats.contains { $0.label == "Total tokens" })
         // Account plan limits are deliberately absent from a selected-session panel.
         #expect(panel.details.allSatisfy { !$0.label.localizedCaseInsensitiveContains("plan") })

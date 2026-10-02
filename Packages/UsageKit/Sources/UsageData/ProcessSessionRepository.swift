@@ -35,8 +35,10 @@ public struct ProcessSessionRepository: UsageRepository {
     private let codex: CodexFiles
     private let cursor: CursorFiles
     private let kiro: KiroFiles
+    private let kiroV3: KiroV3Files
     private let history: UsageHistory
     private let kiroPlan: KiroPlanReader
+    private let creditBuckets: CreditBucketsStore
     private let liveCache = LiveCache()
 
     public init(
@@ -46,6 +48,7 @@ public struct ProcessSessionRepository: UsageRepository {
         timeZone: TimeZone = .current,
         settings: UsageSettings = ProcessSessionRepository.defaultSettings,
         historyCachePath: String? = nil,
+        creditBucketsCachePath: String? = nil,
         filesInterval: TimeInterval = ProcessSessionRepository.defaultFilesInterval
     ) {
         self.filesInterval = filesInterval
@@ -58,11 +61,26 @@ public struct ProcessSessionRepository: UsageRepository {
         self.codex = CodexFiles(directory: homeDirectory + "/.codex")
         self.cursor = CursorFiles(directory: homeDirectory + "/.cursor")
         self.kiro = KiroFiles(directory: homeDirectory + "/.kiro/sessions/cli")
+        self.kiroV3 = KiroV3Files(directory: homeDirectory + "/.kiro/sessions")
         self.history = UsageHistory(
             homeDirectory: homeDirectory, claudeDirectory: self.claudeDirectory, codex: codex, kiro: kiro,
-            discoversClaudeProfiles: self.discoversClaudeProfiles, cachePath: historyCachePath
+            kiroV3: kiroV3, discoversClaudeProfiles: self.discoversClaudeProfiles, cachePath: historyCachePath
         )
         self.kiroPlan = KiroPlanReader(homeDirectory: homeDirectory)
+        self.creditBuckets = CreditBucketsStore(
+            homeDirectory: homeDirectory, calendar: Self.calendar(timeZone: timeZone), cachePath: creditBucketsCachePath
+        )
+    }
+
+    private static func calendar(timeZone: TimeZone) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
+    /// Where the app keeps the local credit buckets between launches (see `CreditBucketsCache`).
+    public static func creditBucketsCachePath(homeDirectory: String = NSHomeDirectory()) -> String {
+        CreditBucketsStore.cachePath(homeDirectory: homeDirectory)
     }
 
     /// Where the app keeps the history between launches (see `HistoryCache`).
@@ -122,6 +140,19 @@ public struct ProcessSessionRepository: UsageRepository {
         } else {
             turns = live.turns
         }
+        let plans = kiroPlan.current(now: now).map { [Agent.kiro: $0] } ?? [:]
+        // Local credit buckets are only summed on the full-history path, where the month's past
+        // turns are present; the quick session refresh reuses nothing from here but keeps the
+        // field empty rather than a partial reckoning.
+        let localCreditBuckets: [Agent: CreditBuckets]
+        if includeHistory {
+            let kiroTurns = turns.filter { $0.agent == .kiro && $0.credits != nil }
+            localCreditBuckets = kiroTurns.isEmpty && plans[.kiro] == nil
+                ? [:]
+                : [.kiro: creditBuckets.buckets(turns: kiroTurns, selectedDay: now, resetsAt: plans[.kiro]?.resetsAt)]
+        } else {
+            localCreditBuckets = [:]
+        }
         return UsageRecords(
             turns: turns.filter { inRange($0.timestamp) },
             limits: includeHistory ? Array(Set(past.limits + live.limits)) : live.limits,
@@ -131,7 +162,8 @@ public struct ProcessSessionRepository: UsageRepository {
             usualRates: past.usualRates,
             isHistoryComplete: past.isComplete,
             creditsThisMonth: past.creditsThisMonth,
-            plans: kiroPlan.current(now: now).map { [.kiro: $0] } ?? [:]
+            plans: plans,
+            localCreditBuckets: localCreditBuckets
         )
     }
 
@@ -164,6 +196,11 @@ public struct ProcessSessionRepository: UsageRepository {
         var snapshot: SessionSnapshot?
         /// Where the session runs in tmux, when its agent records it (Claude Code does).
         var tmux: TmuxLocation?
+        /// The session's true start, from its own file (Kiro's `createdAt`/`created_at`), when
+        /// the agent exposes one. The live `start` event prefers this over the process start,
+        /// which resets when the agent process re-execs (resume, reconnect). Nil for agents that
+        /// expose no reliable session start, which then keep the process start.
+        var sessionStartedAt: Date?
     }
 
     private func read(
@@ -223,7 +260,7 @@ public struct ProcessSessionRepository: UsageRepository {
         }
 
         let start = SessionEvent(
-            timestamp: process.startedAt,
+            timestamp: Self.sessionStart(fileStart: agentFiles.sessionStartedAt, processStart: process.startedAt, now: now),
             agent: found.agent,
             sessionID: sessionID,
             kind: .start,
@@ -371,8 +408,10 @@ public struct ProcessSessionRepository: UsageRepository {
             state: Self.state(lastWrite: found.modified, now: now),
             snapshot: SessionSnapshot(
                 model: session.model.map { ModelName($0) }, context: session.context,
-                turnCount: session.requests.count, stateSince: found.modified
-            )
+                turnCount: session.requests.count, stateSince: found.modified,
+                isSubagent: session.isSubagent, estimatedTokens: session.estimatedTokens
+            ),
+            sessionStartedAt: session.createdAt
         )
     }
 
@@ -381,6 +420,23 @@ public struct ProcessSessionRepository: UsageRepository {
         guard let lastWrite else { return .working }
         if now.timeIntervalSince(lastWrite) < quietAfter { return .working }
         return ClaudeSessionState.waitingOrIdle(since: lastWrite, now: now)
+    }
+
+    /// The furthest back a session file's own start is trusted: a `createdAt` older than this is
+    /// taken to be stale or wrong, and the process start is used instead, so a bad timestamp
+    /// cannot produce a giant duration.
+    static let maxSessionAge: TimeInterval = 30 * 24 * 60 * 60
+
+    /// When a session started, for the live `start` event. The session file's own start
+    /// (`fileStart`) is preferred, because the agent's process start resets when the process
+    /// re-execs (resume, reconnect), which would show a day-old session as minutes old. The
+    /// process start is used instead when there is no file start, or the file start is clearly
+    /// wrong: in the future, or older than `maxSessionAge`, so a bad timestamp can never make a
+    /// negative or absurd duration.
+    static func sessionStart(fileStart: Date?, processStart: Date, now: Date) -> Date {
+        guard let fileStart else { return processStart }
+        guard fileStart <= now, now.timeIntervalSince(fileStart) <= maxSessionAge else { return processStart }
+        return fileStart
     }
 
     // MARK: - Claude Code files

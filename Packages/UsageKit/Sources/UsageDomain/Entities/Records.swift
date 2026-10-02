@@ -183,10 +183,17 @@ public struct SessionSnapshot: Sendable, Hashable {
     public let stateSince: Date?
     /// The sub-agents the session started, each once.
     public let subagents: [SubagentRun]
+    /// True when this session is itself a sub-agent a parent agent started (Kiro).
+    public let isSubagent: Bool
+    /// A rough token estimate for an agent whose files carry no precise counts (Kiro's Auto),
+    /// made from the session's transcript text. It is never a precise count and is never summed
+    /// into any exact total.
+    public let estimatedTokens: TokenUsage?
 
     public init(
         model: ModelName? = nil, context: ContextUsage? = nil, turnCount: Int? = nil, effort: String? = nil,
-        activity: SessionActivity? = nil, stateSince: Date? = nil, subagents: [SubagentRun] = []
+        activity: SessionActivity? = nil, stateSince: Date? = nil, subagents: [SubagentRun] = [],
+        isSubagent: Bool = false, estimatedTokens: TokenUsage? = nil
     ) {
         self.subagents = subagents
         self.model = model
@@ -195,6 +202,8 @@ public struct SessionSnapshot: Sendable, Hashable {
         self.effort = effort
         self.activity = activity
         self.stateSince = stateSince
+        self.isSubagent = isSubagent
+        self.estimatedTokens = estimatedTokens
     }
 }
 
@@ -294,6 +303,10 @@ public struct UsageRecords: Sendable {
     public let isHistoryComplete: Bool
     /// Each agent's plan as its account reports it, for agents that can be asked (Kiro).
     public let plans: [Agent: PlanUsage]
+    /// Local, reset-anchored credit buckets summed from this Mac's turns, for agents that bill
+    /// in credits (Kiro). A local reckoning kept apart from the authoritative plan total, and
+    /// labelled "on this Mac" (see `CreditBuckets`).
+    public let localCreditBuckets: [Agent: CreditBuckets]
 
     public init(
         turns: [Turn],
@@ -304,9 +317,11 @@ public struct UsageRecords: Sendable {
         usualRates: [Agent: UsualRate] = [:],
         isHistoryComplete: Bool = true,
         creditsThisMonth: [Agent: Double] = [:],
-        plans: [Agent: PlanUsage] = [:]
+        plans: [Agent: PlanUsage] = [:],
+        localCreditBuckets: [Agent: CreditBuckets] = [:]
     ) {
         self.plans = plans
+        self.localCreditBuckets = localCreditBuckets
         self.turns = turns
         self.limits = limits
         self.accountSnapshots = accountSnapshots

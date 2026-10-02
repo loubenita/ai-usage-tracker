@@ -21,6 +21,12 @@ struct PanelView: View {
             if !model.stats.isEmpty {
                 StatsRow(stats: model.stats)
             }
+            if let note = model.tokensEstimateNote {
+                Text(note)
+                    .font(TypeScale.captionFont)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let context = model.context {
                 BarRow(model: context).sectionDivider()
             }

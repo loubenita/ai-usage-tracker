@@ -29,6 +29,58 @@ public struct SessionSummary: Sendable, Hashable, Identifiable {
     public let lastActivityAt: Date
     /// The sub-agents it started; their tokens and cost are in the session's.
     public let subagents: [SubagentRun]
+    /// True when the session is itself a sub-agent a parent agent started (Kiro).
+    public let isSubagent: Bool
+    /// A rough token estimate for a session whose agent reports no precise counts (Kiro's Auto),
+    /// made from its transcript text. It is clearly an estimate, excludes cache, and is never
+    /// summed into `tokens` or any exact total.
+    public let estimatedTokens: TokenUsage?
+
+    public init(
+        id: String,
+        agent: Agent,
+        work: Work,
+        model: ModelName?,
+        effort: String?,
+        startedAt: Date,
+        turnCount: Int,
+        tokens: TokenUsage?,
+        costUSD: Decimal?,
+        credits: Double?,
+        context: ContextUsage?,
+        state: SessionState,
+        activeDuration: TimeInterval,
+        idleDuration: TimeInterval,
+        origin: SessionOrigin?,
+        activity: SessionActivity?,
+        stateSince: Date?,
+        lastActivityAt: Date,
+        subagents: [SubagentRun],
+        isSubagent: Bool = false,
+        estimatedTokens: TokenUsage? = nil
+    ) {
+        self.id = id
+        self.agent = agent
+        self.work = work
+        self.model = model
+        self.effort = effort
+        self.startedAt = startedAt
+        self.turnCount = turnCount
+        self.tokens = tokens
+        self.costUSD = costUSD
+        self.credits = credits
+        self.context = context
+        self.state = state
+        self.activeDuration = activeDuration
+        self.idleDuration = idleDuration
+        self.origin = origin
+        self.activity = activity
+        self.stateSince = stateSince
+        self.lastActivityAt = lastActivityAt
+        self.subagents = subagents
+        self.isSubagent = isSubagent
+        self.estimatedTokens = estimatedTokens
+    }
 
     /// What the sub-agents cost, when any cost is known.
     public var subagentCostUSD: Decimal? {
@@ -92,7 +144,9 @@ public enum SessionSummaries {
                 stateSince: snapshot?.stateSince ?? (latest.kind == .start ? nil : latest.timestamp),
                 lastActivityAt: [turns.last?.timestamp, snapshot?.stateSince, start.timestamp]
                     .compactMap { $0 }.max() ?? start.timestamp,
-                subagents: subagents
+                subagents: subagents,
+                isSubagent: snapshot?.isSubagent ?? false,
+                estimatedTokens: snapshot?.estimatedTokens
             )
         }
     }

@@ -111,12 +111,15 @@ public struct OverlayPresenter: Sendable {
         return SessionPanelModel(
             sessionID: sessionID,
             agent: summary.agent,
-            subtitle: [summary.work.tag.project, summary.work.branch, Self.meaningfulAccount(summary.origin?.accountName)]
-                .compactMap { $0 }.joined(separator: " · "),
+            subtitle: [
+                summary.work.tag.project, summary.work.branch,
+                Self.meaningfulAccount(summary.origin?.accountName),
+            ].compactMap { $0 }.joined(separator: " · "),
             title: session.title,
             openAction: summary.origin.flatMap(openAction),
             status: status(session, report: report),
-            stats: stats(summary),
+            stats: stats(summary, now: report.now),
+            tokensEstimateNote: estimatedTokensNote(summary),
             context: contextRow(session, now: report.now),
             tokenMix: summary.tokens.map(tokenMix) ?? [],
             tokenMixNote: summary.tokens.flatMap(tokenMixNote),
@@ -133,24 +136,48 @@ public struct OverlayPresenter: Sendable {
         }
     }
 
-    /// Spent, Tokens, Active and Turns, each only when the agent reported it. An agent that
-    /// bills in credits shows its credits where the cost would be.
-    func stats(_ summary: SessionSummary) -> [StatModel] {
-        let spent: StatModel? = if let cost = summary.costUSD, cost > 0 {
-            StatModel(label: "Total spent", value: format.usd(cost))
+    /// Credits, Cost, Tokens, Active and Turns, each only when the agent reported it. An agent
+    /// that bills in credits (Kiro) shows credits and the dollar estimate as two separate
+    /// columns, so neither value crowds the other.
+    func stats(_ summary: SessionSummary, now: Date) -> [StatModel] {
+        var spend: [StatModel] = []
+        if let cost = summary.costUSD, cost > 0 {
+            spend.append(StatModel(label: "Total spent", value: format.usd(cost)))
         } else if let credits = summary.credits, credits > 0 {
-            StatModel(label: "Credits", value: format.credits(credits))
-        } else {
-            nil
+            spend.append(StatModel(label: "Credits", value: "\(format.credits(credits)) CR"))
+            spend.append(StatModel(label: "Cost", value: "~\(format.usd(format.creditsUSD(credits)))"))
         }
-        return [
-            spent,
+        // How long the session has been open (wall clock since it started) and how much of that
+        // was active work; the rest was idle. Shown as two stats so a session open all day but
+        // worked for five hours reads "Open 8h 20m" beside "Worked 5h 10m".
+        let openDuration = now.timeIntervalSince(summary.startedAt)
+        return spend + [
             summary.tokens?.total.flatMap {
                 $0 > 0 ? StatModel(label: "Total tokens", value: format.tokens($0)) : nil
             },
-            summary.activeDuration >= 60 ? StatModel(label: "Active", value: format.duration(summary.activeDuration)) : nil,
+            // Only when there is no precise total: a rough estimate from the transcript text,
+            // clearly marked with "~" and labelled an estimate, never a count or a total.
+            Self.estimatedTotal(summary).flatMap {
+                StatModel(label: "Tokens (est.)", value: "~\(format.tokens($0))")
+            },
+            openDuration >= 60 ? StatModel(label: "Open", value: format.duration(openDuration)) : nil,
+            summary.activeDuration >= 60 ? StatModel(label: "Worked", value: format.duration(summary.activeDuration)) : nil,
             summary.turnCount > 0 ? StatModel(label: "Turns", value: "\(summary.turnCount)") : nil,
         ].compactMap { $0 }
+    }
+
+    /// The estimated input-plus-output tokens to show, or nil. Shown only when the agent reported
+    /// no precise total, so an estimate never sits beside a real count.
+    static func estimatedTotal(_ summary: SessionSummary) -> Int? {
+        guard (summary.tokens?.total ?? 0) == 0, let estimate = summary.estimatedTokens else { return nil }
+        let total = (estimate.input ?? 0) + (estimate.output ?? 0)
+        return total > 0 ? total : nil
+    }
+
+    /// The note under the estimated-tokens stat, or nil when no estimate is shown.
+    func estimatedTokensNote(_ summary: SessionSummary) -> String? {
+        guard Self.estimatedTotal(summary) != nil else { return nil }
+        return "Estimated from the transcript text, input and output only. Cache tokens are not counted."
     }
 
     /// "Context 34%" over "68k of 200k · full ~15:15".

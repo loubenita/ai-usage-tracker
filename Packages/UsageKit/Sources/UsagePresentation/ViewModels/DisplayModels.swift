@@ -37,6 +37,37 @@ public struct StripItemModel: Sendable, Equatable, Identifiable {
     /// Known USD spend first, then context/activity for unpriced sessions; 0 is first.
     public let priority: Int
     public let accessibilityLabel: String
+    /// True when the session is itself a sub-agent a parent agent started (Kiro). The row draws
+    /// a small "sub" tag; it is false for every ordinary session.
+    public let isSubagent: Bool
+
+    public init(
+        id: String,
+        ring: RingModel,
+        title: String,
+        project: String,
+        branch: String?,
+        time: String,
+        needsUser: Bool,
+        pulses: Bool,
+        highlight: ItemHighlight,
+        priority: Int,
+        accessibilityLabel: String,
+        isSubagent: Bool = false
+    ) {
+        self.id = id
+        self.ring = ring
+        self.title = title
+        self.project = project
+        self.branch = branch
+        self.time = time
+        self.needsUser = needsUser
+        self.pulses = pulses
+        self.highlight = highlight
+        self.priority = priority
+        self.accessibilityLabel = accessibilityLabel
+        self.isSubagent = isSubagent
+    }
 }
 
 public struct StripModel: Sendable, Equatable {
@@ -130,8 +161,12 @@ public struct SessionPanelModel: Sendable, Equatable {
     public let openAction: SessionOpenAction?
     public let status: StatusModel
     /// Total spent, Total tokens, Active, Turns: those the agent reported. The totals include
-    /// any sub-agent runs listed below.
+    /// any sub-agent runs listed below. A faint "Tokens (est.)" stat may follow for an agent
+    /// that reports no precise counts (Kiro's Auto).
     public let stats: [StatModel]
+    /// A one-line note under the stats when an estimated token figure is shown, saying it is
+    /// estimated from the transcript text and excludes cache. Nil when no estimate is shown.
+    public let tokensEstimateNote: String?
     public let context: BarRowModel?
     public let tokenMix: [TokenSegmentModel]
     /// Explains why a small uncached input can sit beside a much larger cache read.
@@ -201,11 +236,24 @@ public struct TimeRowModel: Sendable, Equatable, Identifiable {
     public let time: String
 }
 
+/// One piece of work's share of a metric (tokens or credits): "MS · Video generation  50%  280k",
+/// or "shop · main  61%  61.7 CR · ~$2.47" for an agent that bills in credits. The same shape as
+/// `TimeRowModel`, with the metric value in `value` where time would sit.
+public struct WorkMetricRowModel: Sendable, Equatable, Identifiable {
+    public let id: String
+    /// The dot beside the work; nil for the "N more" row.
+    public let agent: Agent?
+    public let label: String
+    public let percent: String?
+    /// The metric value: tokens ("280k") or credits ("61.7 CR · ~$2.47").
+    public let value: String
+}
+
 public struct ModelShareRowModel: Sendable, Equatable, Identifiable {
     public var id: String { name }
     public let name: String
     public let percent: String
-    /// "61.7 cr", for an agent that bills in credits; nil otherwise.
+    /// "61.7 CR · ~$2.47", for an agent that bills in credits; nil otherwise.
     public let credits: String?
 
     init(name: String, percent: String, credits: String? = nil) {
@@ -255,6 +303,15 @@ public struct AllAgentsModel: Sendable, Equatable {
     public let whereRows: [TimeRowModel]
 }
 
+/// A faint, one-line reckoning of the credits this Mac has recorded, shown below an agent's
+/// chart for an agent that bills in credits (Kiro). It is a local sum labelled "on this Mac",
+/// kept apart from the authoritative plan total, so it is never taken for the org-wide figure.
+/// Nil for every other agent and when there is nothing meaningful to show.
+public struct LocalCreditsModel: Sendable, Equatable {
+    /// "Today - 12.4 CR - ~$0.50 on this Mac", or "Days 1-7 - 204 CR - ~$8.17 on this Mac".
+    public let caption: String
+}
+
 /// One agent on its own (Paper frames 5 and 6).
 public struct AgentUsageModel: Sendable, Equatable {
     public let agent: Agent
@@ -263,7 +320,57 @@ public struct AgentUsageModel: Sendable, Equatable {
     public let stats: [StatModel]
     public let chart: ChartModel?
     public let models: [ModelShareRowModel]
+    /// Where the time went, as the full ordered list of work rows. The view shows the top
+    /// `whereCollapsedCount` with a tappable "+N more" row (`whereMore`) and expands to all.
     public let whereRows: [TimeRowModel]
+    /// How many time rows to show before the "+N more" row, when the list is collapsed.
+    public let whereCollapsedCount: Int
+    /// The "+N more" aggregate (summed share and time of the hidden rows); nil when nothing is
+    /// hidden at the collapsed count.
+    public let whereMore: TimeRowModel?
+    /// Where the tokens or credits went, ranked by that metric. Empty for an agent that reports
+    /// neither, which hides the second section entirely.
+    public let whereMetric: [WorkMetricRowModel]
+    /// "WHERE THE TOKENS WENT" or "WHERE THE CREDITS WENT"; nil when there is no metric section.
+    public let whereMetricTitle: String?
+    /// How many metric rows to show before the "+N more" row, when the list is collapsed.
+    public let whereMetricCollapsedCount: Int
+    /// The "+N more" aggregate of the hidden metric rows; nil when nothing is hidden.
+    public let whereMetricMore: WorkMetricRowModel?
+    /// A faint "on this Mac" credit line below the chart, for Kiro only; nil otherwise.
+    public let localCredits: LocalCreditsModel?
+
+    public init(
+        agent: Agent,
+        note: NoteModel?,
+        limits: [BarRowModel],
+        stats: [StatModel],
+        chart: ChartModel?,
+        models: [ModelShareRowModel],
+        whereRows: [TimeRowModel],
+        whereCollapsedCount: Int = 0,
+        whereMore: TimeRowModel? = nil,
+        whereMetric: [WorkMetricRowModel] = [],
+        whereMetricTitle: String? = nil,
+        whereMetricCollapsedCount: Int = 0,
+        whereMetricMore: WorkMetricRowModel? = nil,
+        localCredits: LocalCreditsModel? = nil
+    ) {
+        self.agent = agent
+        self.note = note
+        self.limits = limits
+        self.stats = stats
+        self.chart = chart
+        self.models = models
+        self.whereRows = whereRows
+        self.whereCollapsedCount = whereCollapsedCount
+        self.whereMore = whereMore
+        self.whereMetric = whereMetric
+        self.whereMetricTitle = whereMetricTitle
+        self.whereMetricCollapsedCount = whereMetricCollapsedCount
+        self.whereMetricMore = whereMetricMore
+        self.localCredits = localCredits
+    }
 }
 
 public enum UsageContent: Sendable, Equatable {
