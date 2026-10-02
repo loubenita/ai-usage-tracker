@@ -29,8 +29,8 @@ targets:
       properties:
         CFBundleDisplayName: AI Usage Tracker
         # The released version. App/Info.plist is written from here, so it belongs here.
-        CFBundleShortVersionString: 0.4.0
-        CFBundleVersion: "5"
+        CFBundleShortVersionString: 0.5.0
+        CFBundleVersion: "6"
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.developer-tools
         NSAppleEventsUsageDescription: AI Usage Tracker asks Terminal to select a session's tab when you click Open.
