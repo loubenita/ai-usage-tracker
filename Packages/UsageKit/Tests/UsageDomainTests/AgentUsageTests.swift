@@ -134,15 +134,19 @@ struct AgentLimitsTests {
         #expect(report.stripAgent == .codex)
     }
 
-    @Test func aWindowThatHasResetIsNotShown() {
-        // The window reset at start + 3600; an hour and a minute later it says nothing.
+    @Test func aWindowThatHasResetIsNoLongerALimitInUse() {
+        // The window reset at start + 3600; an hour and a minute later it says nothing about the
+        // window running now, only that it reset (see `LimitResetTests`).
         let settings = UsageSettings(dailyCostBudget: nil, dailyTokenBudget: nil, workdayEndHour: 20)
         let records = UsageRecords(
             turns: [], limits: [limit(.codex, .fiveHour, 40)], sessionEvents: [], capturedAt: start
         )
         let generate = GenerateUsageReport(settings: settings, calendar: Calendar(identifier: .gregorian))
         #expect(generate(records, now: start + 3000).limits(for: .codex).fiveHour?.usedPercent == 40)
-        #expect(generate(records, now: start + 3660).limits(for: .codex).isEmpty)
+        let reset = generate(records, now: start + 3660).limits(for: .codex)
+        #expect(reset.fiveHour == nil)
+        #expect(!reset.hasWindows)
+        #expect(reset.resetWindows == [ResetWindow(kind: .fiveHour, resetsAt: start + 3600, readAt: start)])
         #expect(generate(records, now: start + 3660).stripAgent == nil)
     }
 

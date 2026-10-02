@@ -76,6 +76,9 @@ public struct AgentLimits: Sendable, Hashable {
     public let creditsUsedToday: Double?
     /// The plan's credits left spread over the days until it resets (see `PlanUsage`).
     public let creditsPerDayLeft: Double?
+    /// Windows and plans whose last reading is of a period that has ended (see `ResetWindow`).
+    /// They are not limits in use: `hasWindows`, `standings` and every forecast leave them out.
+    public let resetWindows: [ResetWindow]
 
     public init(
         fiveHour: LimitReport?,
@@ -86,8 +89,10 @@ public struct AgentLimits: Sendable, Hashable {
         weeklyUsedByDay: [Double]? = nil,
         plan: PlanUsage? = nil,
         creditsUsedToday: Double? = nil,
-        creditsPerDayLeft: Double? = nil
+        creditsPerDayLeft: Double? = nil,
+        resetWindows: [ResetWindow] = []
     ) {
+        self.resetWindows = resetWindows
         self.creditsPerDayLeft = creditsPerDayLeft
         self.fiveHour = fiveHour
         self.weekly = weekly
@@ -108,7 +113,9 @@ public struct AgentLimits: Sendable, Hashable {
 
     /// Whether the agent reported any limit window as a percentage.
     public var hasWindows: Bool { fiveHour != nil || weekly != nil || monthly != nil }
-    public var isEmpty: Bool { !hasWindows && creditsUsedThisMonth == nil && plan == nil && creditsUsedToday == nil }
+    public var isEmpty: Bool {
+        !hasWindows && creditsUsedThisMonth == nil && plan == nil && creditsUsedToday == nil && resetWindows.isEmpty
+    }
 }
 
 /// One account's limits. The account ID is its local profile directory, never displayed.
@@ -351,7 +358,11 @@ public struct GenerateUsageReport: Sendable {
                 },
                 plan: plan,
                 creditsUsedToday: creditsToday[agent],
-                creditsPerDayLeft: plan?.creditsPerDayLeft(now: now, calendar: calendar)
+                creditsPerDayLeft: plan?.creditsPerDayLeft(now: now, calendar: calendar),
+                // A window or plan that has reset says nothing about the one running now, but its
+                // last reading stays as a reset window, which no total, forecast or warning counts.
+                resetWindows: ResetWindow.lastSeen(in: all, now: now)
+                    + [ResetWindow.lastSeen(plan: plans[agent], now: now)].compactMap { $0 }
             )
             if !limits.isEmpty { result[agent] = limits }
         }

@@ -310,10 +310,11 @@ struct FakeUsageData {
 
     // MARK: - Claude accounts
 
-    /// What the owner's status line saves for two Claude accounts, which is only percentages and
-    /// when they were read, with no reset time. The first account was read three minutes ago. The
-    /// second is at its weekly limit, so it has no sessions to refresh it: its reading is four
-    /// hours old.
+    /// What the owner's status line saves for two Claude accounts: percentages and when they were
+    /// read, and a reset time only for the second, as a cache saved before the status line knew
+    /// reset times has none. The first account was read three minutes ago. The second is at its
+    /// weekly limit, so it has no sessions to refresh it: its reading is four hours old, and its
+    /// week resets on Wednesday at 17:00.
     private func accountSnapshots() -> [AccountUsageSnapshot] {
         [
             AccountUsageSnapshot(
@@ -322,7 +323,8 @@ struct FakeUsageData {
             ),
             AccountUsageSnapshot(
                 id: "/Users/me/.claude-second", name: "Second", agent: .claudeCode,
-                readAt: now.addingTimeInterval(-4 * 3600), fiveHourPercent: 0, weeklyPercent: 100
+                readAt: now.addingTimeInterval(-4 * 3600), fiveHourPercent: 0, weeklyPercent: 100,
+                weeklyResetsAt: at(dayOffset: 2, 17, 0)
             ),
         ]
     }
