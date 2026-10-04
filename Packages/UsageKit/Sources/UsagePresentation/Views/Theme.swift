@@ -94,8 +94,13 @@ enum TypeScale {
 /// the frames lift — the status pill, the picker's track and selected pill, and the round
 /// buttons — are translucent white instead.
 enum GlassStyle {
-    /// The gap between the strip and the panel; also the container's merge distance.
+    /// The gap between the strip and the panel.
     static let spacing: CGFloat = 8
+    /// How close neighbouring glass shapes must get before Liquid Glass fuses them.
+    /// Kept below `spacing` so the strip and panel stay separate at rest. When this matched
+    /// the gap, opening or growing a panel morph-merged into the rail and looked like the
+    /// session list compacting, then collapsing.
+    static let containerSpacing: CGFloat = 0
     static let panelRadius: CGFloat = 22
     static let stripRadius: CGFloat = 22
 
@@ -114,6 +119,9 @@ extension View {
         self.padding(padding)
             .frame(width: StripLayout.panelWidth, alignment: .leading)
             .glassEffect(GlassStyle.glass(), in: .rect(cornerRadius: GlassStyle.panelRadius))
+            // Appear and disappear on their own. The default matched-geometry transition would
+            // morph the panel out of the strip's glass and read as the session list collapsing.
+            .glassEffectTransition(.materialize)
     }
 
     /// Something to click in the overlay. The overlay's window never becomes key, so SwiftUI

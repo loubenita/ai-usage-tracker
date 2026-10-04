@@ -56,9 +56,10 @@ public struct OverlayView: View {
             offset: viewModel.stripOffset
         )
         let panel = panelPlacement(available: availableHeight, besideStrip: strip.offset)
-        // One container, so the strip and the panel are glass of one kind and blend at their edges.
-        return GlassEffectContainer(spacing: GlassStyle.spacing) {
-            HStack(alignment: .center, spacing: 8) {
+        // One container so both surfaces sample the same backdrop. Merge distance stays below
+        // the strip–panel gap, so opening or growing a panel cannot morph-fuse into the rail.
+        return GlassEffectContainer(spacing: GlassStyle.containerSpacing) {
+            HStack(alignment: .center, spacing: GlassStyle.spacing) {
                 Spacer(minLength: 0)
                 // A panel taller than the screen scrolls instead of running off it.
                 // The panel's own height, not the frame's, which takes the whole screen.
