@@ -6,7 +6,7 @@ The short version is in the [README](../README.md); this is the detail behind it
 
 Once a second, the app reads the list of running processes (from the `ps` command). It keeps a process when all three of these are true:
 
-1. **It is an agent.** Its program is `claude`, `codex`, `cursor-agent`, `opencode`, `kiro`, `kiro-cli` or `kiro-cli-chat`, run directly or through `node`, `bun` or `deno`. A program inside an app whose name has a space, such as `/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat`, counts too, even though `ps` shows the space unquoted. A wrapper script that only mentions `claude` in its arguments does not count.
+1. **It is an agent.** Its program is `claude`, `codex`, `cursor-agent` (or Cursor's newer `agent` launcher, when its arguments name a `cursor-agent` path), `opencode`, `kiro`, `kiro-cli` or `kiro-cli-chat`, run directly or through `node`, `bun` or `deno`. A program inside an app whose name has a space, such as `/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat`, counts too, even though `ps` shows the space unquoted. A wrapper script that only mentions `claude` in its arguments does not count.
 2. **It has a terminal.** A process with no terminal is a background job.
 3. **No other agent started it.** If one did, it is a sub-agent, and it is left out.
 

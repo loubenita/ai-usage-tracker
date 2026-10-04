@@ -26,7 +26,7 @@ This is the source-backed list of what AI Usage Tracker can read, calculate, or 
 
 ## Facts shared by terminal sessions
 
-`UsageData/Processes/TerminalAgentFinder.swift` finds `claude`, `codex`, `cursor-agent`, `opencode`, `kiro`, `kiro-cli` and `kiro-cli-chat`, including Node, Bun and Deno launchers. It keeps terminal processes and drops a child agent when an ancestor is already an agent. `ProcessSessionRepository.swift` builds the live session.
+`UsageData/Processes/TerminalAgentFinder.swift` finds `claude`, `codex`, `cursor-agent` (and Cursor's `agent` launcher when arguments mention `cursor-agent`), `opencode`, `kiro`, `kiro-cli` and `kiro-cli-chat`, including Node, Bun and Deno launchers. It keeps terminal processes and drops a child agent when an ancestor is already an agent. `ProcessSessionRepository.swift` builds the live session.
 
 | Field | Status | Source and caveat |
 |---|---|---|

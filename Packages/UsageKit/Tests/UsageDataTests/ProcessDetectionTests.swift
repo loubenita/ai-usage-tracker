@@ -113,6 +113,14 @@ struct TerminalAgentFinderTests {
         #expect(agent("/opt/homebrew/bin/codex") == .codex)
         #expect(agent("node /opt/homebrew/bin/codex") == .codex)
         #expect(agent("cursor-agent") == .cursor)
+        // Current Cursor CLI installs as `agent` and passes a path under cursor-agent.
+        #expect(agent(
+            "/Users/me/.local/bin/agent --use-system-ca /Users/me/.local/share/cursor-agent/versions/2026.10.01/index.js --yolo"
+        ) == .cursor)
+        #expect(agent(
+            "node /Users/me/.local/share/cursor-agent/versions/2026.10.01/index.js"
+        ) == .cursor)
+        #expect(agent("agent --help") == nil)
         #expect(agent("/Users/me/.opencode/bin/opencode") == .opencode)
         #expect(agent("kiro-cli chat") == .kiro)
         // Kiro's installer puts its chat program in "Kiro CLI.app", a folder with a space in it.

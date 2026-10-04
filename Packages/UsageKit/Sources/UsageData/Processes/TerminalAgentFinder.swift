@@ -53,6 +53,19 @@ enum TerminalAgentFinder {
     /// Script runners an agent can be launched through, as in `node /opt/homebrew/bin/codex`.
     static let runtimes: Set<String> = ["node", "bun", "deno"]
 
+    /// Cursor's CLI used to show as `cursor-agent`; current installs show as `agent` and pass a
+    /// path under `cursor-agent` in their arguments. Bare `agent` alone is too common to trust.
+    static func isCursorAgent(_ arguments: [String]) -> Bool {
+        guard let first = arguments.first else { return false }
+        let name = ProcessRow.baseName(first)
+        if name == "cursor-agent" { return true }
+        if name == "agent" { return arguments.contains { $0.contains("cursor-agent") } }
+        if runtimes.contains(name) {
+            return arguments.dropFirst().contains { $0.contains("cursor-agent") }
+        }
+        return false
+    }
+
     static func find(in rows: [ProcessRow]) -> [TerminalAgentProcess] {
         let byPID = Dictionary(rows.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         return rows
@@ -77,6 +90,9 @@ enum TerminalAgentFinder {
         let arguments = row.arguments
         guard let first = arguments.first else { return nil }
         let name = ProcessRow.baseName(first)
+        if isCursorAgent(arguments) {
+            return isServer(arguments) ? nil : .cursor
+        }
         if let agent = agentNames[name] {
             // `claude attach <id>` is a window onto a background session, which is found itself.
             if agent == .claudeCode, arguments.dropFirst().first == "attach" { return nil }
