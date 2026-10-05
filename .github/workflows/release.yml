@@ -153,6 +153,12 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/scripts/install.sh | bash
           ```
 
+          Already installed? Update to this release with:
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/update.sh | bash
+          ```
+
           Or download `AIUsageTracker.zip` below, open it, drag `AIUsageTracker.app` into `/Applications`, and run:
 
           ```sh
