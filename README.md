@@ -38,6 +38,14 @@ curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/scr
 
 That downloads the [latest release](https://github.com/loubenita/ai-usage-tracker/releases/latest), puts the app in Applications, and opens it.
 
+**Update** — already installed? Paste this in Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/loubenita/ai-usage-tracker/main/update.sh | bash
+```
+
+That gets the latest release, replaces your copy, and opens it. Then it tells you which version you had and which you have now. If you have this code on your Mac, `./update.sh` does the same.
+
 **By hand**
 
 1. Download `AIUsageTracker.zip` from the [releases page](https://github.com/loubenita/ai-usage-tracker/releases/latest).
